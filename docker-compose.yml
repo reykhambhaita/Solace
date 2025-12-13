@@ -1,0 +1,9 @@
+services:
+  backend:
+    build:
+      context: ./solace-backend
+    image: solace-complete
+    container_name: solace-backend
+    ports:
+      - "3001:3001"
+    restart: unless-stopped
