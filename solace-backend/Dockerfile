@@ -2,6 +2,7 @@ FROM ubuntu:22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
+# Install runtimes
 RUN apt-get update && apt-get install -y \
     python3 python3-pip \
     curl \
@@ -14,5 +15,15 @@ RUN apt-get update && apt-get install -y \
     && apt-get install -y nodejs \
     && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /usercode
-CMD ["/bin/bash"]
+WORKDIR /app
+
+# Install backend deps
+COPY package*.json ./
+RUN npm install --production
+
+# Copy backend
+COPY server.js ./
+
+EXPOSE 3001
+
+CMD ["node", "server.js"]
