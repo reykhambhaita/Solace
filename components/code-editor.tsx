@@ -1,19 +1,20 @@
 "use client";
 
+import { TreeSitterAnalyzer } from "@/components/tree-sitter-demo";
 import { Editor } from "@monaco-editor/react";
-import { Loader2, Play } from "lucide-react";
+import { Binary, Loader2, Play } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
-// Backend URL - change this when you deploy to Railway
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3001';
 
 export default function CodeEditor() {
   const [code, setCode] = useState("");
   const [output, setOutput] = useState("");
   const [language, setLanguage] = useState("javascript");
-  const [editorWidth, setEditorWidth] = useState(60);
+  const [editorWidth, setEditorWidth] = useState(40);
   const [isDragging, setIsDragging] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
+  const [showAST, setShowAST] = useState(true);
   const containerRef = useRef<HTMLDivElement>(null);
 
   // Check which languages can run client-side (in browser)
@@ -28,7 +29,7 @@ export default function CodeEditor() {
 
   const runCode = async () => {
     if (!code.trim()) {
-      setOutput("❌ Error: No code to execute");
+      setOutput("⚠ Error: No code to execute");
       return;
     }
 
@@ -46,11 +47,11 @@ export default function CodeEditor() {
       }
       // Unsupported language
       else {
-        setOutput(`❌ Error: Language "${language}" is not supported yet`);
+        setOutput(`⚠ Error: Language "${language}" is not supported yet`);
         setIsRunning(false);
       }
     } catch (error) {
-      setOutput(`❌ Unexpected Error: ${error instanceof Error ? error.message : String(error)}`);
+      setOutput(`⚠ Unexpected Error: ${error instanceof Error ? error.message : String(error)}`);
       setIsRunning(false);
     }
   };
@@ -83,9 +84,9 @@ export default function CodeEditor() {
       console.log = originalLog;
       console.error = originalError;
 
-      setOutput(logs.join('\n') || '✅ Code executed successfully (no output)');
+      setOutput(logs.join('\n') || '✓ Code executed successfully (no output)');
     } catch (error) {
-      setOutput(`❌ Error: ${error instanceof Error ? error.message : String(error)}`);
+      setOutput(`⚠ Error: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
       setIsRunning(false);
     }
@@ -135,17 +136,17 @@ export default function CodeEditor() {
       if (error instanceof Error) {
         if (error.message.includes('Failed to fetch')) {
           setOutput(
-            `❌ Connection Error: Cannot connect to backend server.\n\n` +
+            `⚠ Connection Error: Cannot connect to backend server.\n\n` +
             `Make sure the backend is running:\n` +
             `  cd solace-backend\n` +
             `  npm start\n\n` +
             `Backend URL: ${BACKEND_URL}`
           );
         } else {
-          setOutput(`❌ Error: ${error.message}`);
+          setOutput(`⚠ Error: ${error.message}`);
         }
       } else {
-        setOutput(`❌ Error: ${String(error)}`);
+        setOutput(`⚠ Error: ${String(error)}`);
       }
     } finally {
       setIsRunning(false);
@@ -158,7 +159,7 @@ export default function CodeEditor() {
     const containerRect = containerRef.current.getBoundingClientRect();
     const newWidth = ((e.clientX - containerRect.left) / containerRect.width) * 100;
 
-    if (newWidth >= 20 && newWidth <= 80) {
+    if (newWidth >= 20 && newWidth <= 70) {
       setEditorWidth(newWidth);
     }
   };
@@ -227,9 +228,21 @@ export default function CodeEditor() {
         </div>
 
         <div className="flex items-center gap-3">
+          {/* AST Toggle */}
+          <button
+            onClick={() => setShowAST(!showAST)}
+            className={`flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition-all ${showAST
+              ? 'bg-zinc-800 text-white'
+              : 'text-zinc-400 hover:bg-zinc-900 hover:text-white'
+              }`}
+          >
+            <Binary className="h-4 w-4" />
+            AST
+          </button>
+
           {/* Execution mode indicator */}
           {canRunClientSide(language) && (
-            <span className="text-xs text-green-500">🌐 Runs in browser</span>
+            <span className="text-xs text-green-500">🟢 Runs in browser</span>
           )}
           {canRunOnBackend(language) && (
             <span className="text-xs text-blue-500">🐳 Runs on server</span>
@@ -250,8 +263,8 @@ export default function CodeEditor() {
         </div>
       </div>
 
-      {/* Editor and Output */}
-      <div ref={containerRef} className="flex flex-1 overflow-hidden">
+      {/* Editor, Output, and AST */}
+      <div ref={containerRef} className="flex flex-1 min-h-0">
         {/* Editor Panel */}
         <div
           className="flex flex-col border-r border-zinc-800"
@@ -293,36 +306,77 @@ export default function CodeEditor() {
           onMouseDown={() => setIsDragging(true)}
         />
 
-        {/* Output Panel */}
+        {/* Right Panel - Output and/or AST */}
         <div
           className="flex flex-col bg-[#0a0a0a]"
           style={{ width: `${100 - editorWidth}%` }}
         >
-          <div className="border-b border-zinc-800 bg-[#0f0f0f] px-6 py-2">
-            <span className="text-sm font-medium text-zinc-400">Output</span>
-          </div>
-          <div className="flex-1 overflow-auto p-6">
-            {output ? (
-              <pre className="font-mono text-sm text-zinc-300 whitespace-pre-wrap">
-                {output}
-              </pre>
-            ) : (
-              <div className="flex h-full items-center justify-center">
-                <div className="text-center">
-                  <p className="text-sm text-zinc-600 mb-2">
-                    Run your code to see the output here
-                  </p>
-                  <p className="text-xs text-zinc-700">
-                    {canRunClientSide(language)
-                      ? '• Runs instantly in your browser'
-                      : canRunOnBackend(language)
-                        ? '• Requires backend server to be running'
-                        : '• This language is not supported yet'}
-                  </p>
+          {showAST ? (
+            <div className="flex flex-col h-full">
+              {/* Output Panel - Takes 40% when AST is shown */}
+              <div className="flex flex-col border-b border-zinc-800" style={{ height: '40%' }}>
+                <div className="border-b border-zinc-800 bg-[#0f0f0f] px-6 py-2">
+                  <span className="text-sm font-medium text-zinc-400">Output</span>
+                </div>
+                <div className="flex-1 overflow-auto p-6">
+                  {output ? (
+                    <pre className="font-mono text-sm text-zinc-300 whitespace-pre-wrap">
+                      {output}
+                    </pre>
+                  ) : (
+                    <div className="flex h-full items-center justify-center">
+                      <div className="text-center">
+                        <p className="text-sm text-zinc-600 mb-2">
+                          Run your code to see the output here
+                        </p>
+                        <p className="text-xs text-zinc-700">
+                          {canRunClientSide(language)
+                            ? '• Runs instantly in your browser'
+                            : canRunOnBackend(language)
+                              ? '• Requires backend server to be running'
+                              : '• This language is not supported yet'}
+                        </p>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
-            )}
-          </div>
+
+              {/* AST Panel - Takes 60% when shown */}
+              <div className="flex-1 min-h-0">
+                <TreeSitterAnalyzer code={code} language={language} />
+              </div>
+            </div>
+          ) : (
+            /* Output Panel - Full height when AST is hidden */
+            <div className="flex flex-col h-full">
+              <div className="border-b border-zinc-800 bg-[#0f0f0f] px-6 py-2">
+                <span className="text-sm font-medium text-zinc-400">Output</span>
+              </div>
+              <div className="flex-1 overflow-auto p-6">
+                {output ? (
+                  <pre className="font-mono text-sm text-zinc-300 whitespace-pre-wrap">
+                    {output}
+                  </pre>
+                ) : (
+                  <div className="flex h-full items-center justify-center">
+                    <div className="text-center">
+                      <p className="text-sm text-zinc-600 mb-2">
+                        Run your code to see the output here
+                      </p>
+                      <p className="text-xs text-zinc-700">
+                        {canRunClientSide(language)
+                          ? '• Runs instantly in your browser'
+                          : canRunOnBackend(language)
+                            ? '• Requires backend server to be running'
+                            : '• This language is not supported yet'}
+                      </p>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>
