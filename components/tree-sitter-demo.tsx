@@ -9,6 +9,8 @@ import {
 } from "@/components/ui/collapsible";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { analyzeComplexity, type ComplexityAnalysisResult } from "@/lib/analyzer/complexity-analyzer";
+import { useCodeContext } from "@/lib/analyzer/context-detector";
 import {
   syntaxNodeToAST,
   useTreeSitter,
@@ -19,11 +21,12 @@ import {
   CheckIcon,
   ChevronDownIcon,
   ChevronRightIcon,
-  ClockIcon,
-  CopyIcon
+  CopyIcon,
 } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
-
+import { memo, useCallback, useEffect, useMemo, useState } from "react";
+import { type CSTNode } from "../lib/analyzer/semantic-ir";
+import { CodeContextViewer } from "./CodeContextViewer";
+import { ComplexityViewer } from "./ComplexityViewer";
 // Map language names to tree-sitter supported languages
 const languageMap: Record<string, SupportedLanguage | null> = {
   javascript: "typescript",
@@ -48,11 +51,11 @@ const languageInfo: Record<SupportedLanguage, { name: string; color: string }> =
   cpp: { name: "C++", color: "bg-red-500" },
   c: { name: "C", color: "bg-purple-500" },
   ruby: { name: "Ruby", color: "bg-pink-500" },
-  php: { name: "PHP", color: "bg-blue-500" },
+  php: { name: "PHP", color: "bg-indigo-500" },
 };
 
-// AST Tree Node Component
-function ASTTreeNode({
+// AST Tree Node Component with memoization
+const ASTTreeNode = memo(({
   node,
   depth = 0,
   defaultExpanded = true,
@@ -60,14 +63,12 @@ function ASTTreeNode({
   node: ASTNode;
   depth?: number;
   defaultExpanded?: boolean;
-}) {
+}) => {
   const [isExpanded, setIsExpanded] = useState(defaultExpanded && depth < 3);
   const hasChildren = node.children.length > 0;
   const isLeaf = !hasChildren;
 
-  const nodeTypeColor = node.isNamed
-    ? "text-blue-400"
-    : "text-zinc-500";
+  const nodeTypeColor = node.isNamed ? "text-blue-400" : "text-zinc-500";
 
   return (
     <div className="select-none">
@@ -99,7 +100,8 @@ function ASTTreeNode({
           )}
 
           <span className="text-[10px] text-zinc-600 ml-auto opacity-0 group-hover:opacity-100 transition-opacity">
-            {node.startPosition.row}:{node.startPosition.column} - {node.endPosition.row}:{node.endPosition.column}
+            {node.startPosition.row}:{node.startPosition.column} - {node.endPosition.row}:
+            {node.endPosition.column}
           </span>
         </div>
 
@@ -118,7 +120,9 @@ function ASTTreeNode({
       </Collapsible>
     </div>
   );
-}
+});
+
+ASTTreeNode.displayName = "ASTTreeNode";
 
 interface TreeSitterAnalyzerProps {
   code: string;
@@ -127,12 +131,17 @@ interface TreeSitterAnalyzerProps {
 
 export function TreeSitterAnalyzer({ code, language }: TreeSitterAnalyzerProps) {
   const { isLoading, error, language: loadedLanguage, loadLanguage, parse } = useTreeSitter();
-  const [astTree, setAstTree] = useState<ASTNode | null>(null);
+  const [astTree, setAstTree] = useState<ASTNode | null>(null); // UI AST
+  const [cstTree, setCstTree] = useState<CSTNode | null>(null); // NEW: Analysis CST
   const [sexp, setSexp] = useState("");
   const [parseTime, setParseTime] = useState(0);
   const [copied, setCopied] = useState(false);
+  const [complexityResult, setComplexityResult] = useState<ComplexityAnalysisResult | null>(null);
+  // Use the context hook for code analysis
+  const { context: codeContext, isAnalyzing, error: analysisError } = useCodeContext(code);
 
-  const treeSitterLang = languageMap[language];
+
+  const treeSitterLang = useMemo(() => languageMap[language], [language]);
   const isSupported = treeSitterLang !== null;
 
   // Load language when it changes
@@ -142,18 +151,38 @@ export function TreeSitterAnalyzer({ code, language }: TreeSitterAnalyzerProps) 
     }
   }, [treeSitterLang, loadLanguage]);
 
-  // Parse code when it changes
+  // Parse code with debounce
   const handleParse = useCallback(() => {
     if (!loadedLanguage || !isSupported) return;
 
-    const result = parse(code);
-    if (result.rootNode) {
-      const ast = syntaxNodeToAST(result.rootNode);
-      setAstTree(ast);
-      setSexp(result.sexp);
-      setParseTime(result.parseTime);
+    try {
+      const result = parse(code);
+      if (result.rootNode && result.cst) {
+        // UI AST - shallow, truncated (existing)
+        const ast = syntaxNodeToAST(result.rootNode, {
+          maxDepth: 50,
+          maxTextLength: 100,
+          filter: (node) => node.isNamed || node.type === "identifier",
+        });
+
+        if (ast) {
+          setAstTree(ast);
+          setSexp(result.sexp);
+          setParseTime(result.parseTime);
+
+          // NEW: Store lossless CST for analysis
+          setCstTree(result.cst);
+
+          // MODIFIED: Use CST for complexity analysis, not UI AST
+          const complexity = analyzeComplexity(result.cst, loadedLanguage);
+          setComplexityResult(complexity);
+        }
+      }
+    } catch (err) {
+      console.error("[TreeSitterAnalyzer] Parse error:", err);
     }
   }, [code, loadedLanguage, parse, isSupported]);
+
 
   // Auto-parse with debounce
   useEffect(() => {
@@ -164,20 +193,25 @@ export function TreeSitterAnalyzer({ code, language }: TreeSitterAnalyzerProps) 
     return () => clearTimeout(timer);
   }, [handleParse]);
 
-  const handleCopySexp = async () => {
+  const handleCopySexp = useCallback(async () => {
     await navigator.clipboard.writeText(sexp);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
-  };
+  }, [sexp]);
 
   if (!isSupported) {
     return (
-      <div className="flex h-full items-center justify-center p-8">
-        <div className="text-center">
-          <p className="text-zinc-400 mb-2">AST analysis not available for {language}</p>
-          <p className="text-xs text-zinc-600">
-            Supported: JavaScript, TypeScript, Python, Go, Rust
-          </p>
+      <div className="flex flex-col h-full bg-[#0a0a0a]">
+        <div className="border-b border-zinc-800 bg-[#0f0f0f] px-6 py-2">
+          <span className="text-sm font-medium text-zinc-400">AST Analysis</span>
+        </div>
+        <div className="flex h-full items-center justify-center p-8">
+          <div className="text-center">
+            <p className="text-zinc-400 mb-2">AST analysis not available for {language}</p>
+            <p className="text-xs text-zinc-600">
+              Supported: JavaScript, TypeScript, Python, Go, Rust, Java, C++, C, Ruby, PHP
+            </p>
+          </div>
         </div>
       </div>
     );
@@ -185,82 +219,128 @@ export function TreeSitterAnalyzer({ code, language }: TreeSitterAnalyzerProps) 
 
   return (
     <div className="flex flex-col h-full bg-[#0a0a0a]">
-      {/* Header with stats */}
-      <div className="border-b border-zinc-800 bg-[#0f0f0f] px-6 py-3 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <span className="text-sm font-medium text-zinc-300">AST Analysis</span>
+      {/* Header */}
+      <div className="border-b border-zinc-800 bg-[#0f0f0f] px-6 py-2 shrink-0">
+        <span className="text-sm font-medium text-zinc-400">AST Analysis</span>
+      </div>
+
+      {/* Tabs */}
+      <Tabs defaultValue="tree" className="flex-1 flex flex-col overflow-hidden">
+        <div className="border-b border-zinc-800 bg-[#0f0f0f] px-6 shrink-0">
+          <TabsList className="h-10 bg-transparent border-0 p-0 gap-4">
+            <TabsTrigger
+              value="tree"
+              className="text-xs font-medium text-zinc-500 data-[state=active]:text-zinc-300 data-[state=active]:bg-zinc-800/50 data-[state=active]:border-b-2 data-[state=active]:border-blue-500 rounded-t-md rounded-b-none px-4 py-2 transition-all hover:text-zinc-400"
+            >
+              Tree View
+            </TabsTrigger>
+            <TabsTrigger
+              value="sexp"
+              className="text-xs font-medium text-zinc-500 data-[state=active]:text-zinc-300 data-[state=active]:bg-zinc-800/50 data-[state=active]:border-b-2 data-[state=active]:border-blue-500 rounded-t-md rounded-b-none px-4 py-2 transition-all hover:text-zinc-400"
+            >
+              S-Expression
+            </TabsTrigger>
+            <TabsTrigger
+              value="context"
+              className="text-xs font-medium text-zinc-500 data-[state=active]:text-zinc-300 data-[state=active]:bg-zinc-800/50 data-[state=active]:border-b-2 data-[state=active]:border-blue-500 rounded-t-md rounded-b-none px-4 py-2 transition-all hover:text-zinc-400"
+            >
+              Code Context
+            </TabsTrigger>
+            <TabsTrigger
+              value="complexity"
+              className="text-xs font-medium text-zinc-500 data-[state=active]:text-zinc-300 data-[state=active]:bg-zinc-800/50 data-[state=active]:border-b-2 data-[state=active]:border-blue-500 rounded-t-md rounded-b-none px-4 py-2 transition-all hover:text-zinc-400"
+            >
+              Complexity
+            </TabsTrigger>
+          </TabsList>
+        </div>
+
+        {/* Stats bar */}
+        <div className="border-b border-zinc-800 bg-[#0f0f0f] px-6 py-2 flex items-center gap-3 shrink-0">
           {treeSitterLang && (
-            <Badge variant="secondary" className="bg-zinc-800 text-zinc-300">
-              <div className={`size-2 rounded-full mr-1.5 ${languageInfo[treeSitterLang].color}`} />
+            <Badge variant="secondary" className="bg-zinc-800 text-white text-xs border-0">
               {languageInfo[treeSitterLang].name}
             </Badge>
           )}
-        </div>
-
-        <div className="flex items-center gap-4">
-          {error && (
-            <Badge variant="destructive" className="text-xs">{error}</Badge>
-          )}
           {parseTime > 0 && (
-            <div className="flex items-center gap-1 text-xs text-zinc-500">
-              <ClockIcon className="size-3" />
-              {parseTime.toFixed(2)}ms
-            </div>
+            <span className="text-xs text-zinc-600">Parsed in {parseTime.toFixed(1)}ms</span>
           )}
+          {codeContext && (
+            <span className="text-xs text-zinc-600">
+              Analyzed in {codeContext.analysisTime.toFixed(1)}ms
+            </span>
+          )}
+          {error && <Badge variant="destructive" className="text-xs">{error}</Badge>}
         </div>
-      </div>
 
-      {/* Content */}
-      <div className="flex-1 min-h-0">
-        <Tabs defaultValue="tree" className="h-full flex flex-col">
-          <div className="border-b border-zinc-800 px-4 bg-[#0f0f0f]">
-            <TabsList className="h-10 bg-transparent border-b border-zinc-800">
-              <TabsTrigger value="tree" className="text-zinc-400 data-[state=active]:text-black">
-                Tree View
-              </TabsTrigger>
-              <TabsTrigger value="sexp" className="text-zinc-400 data-[state=active]:text-black">
-                S-Expression
-              </TabsTrigger>
-            </TabsList>
-          </div>
 
-          <TabsContent value="tree" className="flex-1 min-h-0 m-0">
-            <ScrollArea className="h-full">
-              <div className="p-6">
-                {astTree ? (
-                  <ASTTreeNode node={astTree} />
-                ) : (
-                  <div className="flex items-center justify-center h-full text-zinc-600 text-sm">
-                    {isLoading ? "Loading parser..." : "Write code to see AST"}
-                  </div>
-                )}
-              </div>
-            </ScrollArea>
-          </TabsContent>
-
-          <TabsContent value="sexp" className="flex-1 min-h-0 m-0">
-            <div className="relative h-full">
-              <Button
-                variant="ghost"
-                size="icon"
-                className="absolute top-2 right-2 z-10 h-7 w-7 bg-zinc-900 hover:bg-zinc-800"
-                onClick={handleCopySexp}
-              >
-                {copied ? (
-                  <CheckIcon className="size-3 text-green-400" />
-                ) : (
-                  <CopyIcon className="size-3 text-zinc-400" />
-                )}
-              </Button>
-              <ScrollArea className="h-full">
-                <pre className="p-6 text-xs font-mono text-zinc-400 whitespace-pre-wrap break-all">
-                  {sexp || "No S-expression to display"}
-                </pre>
-              </ScrollArea>
+        {/* Tree View Tab */}
+        <TabsContent
+          value="tree"
+          className="flex-1 m-0 overflow-hidden data-[state=active]:flex data-[state=active]:flex-col"
+        >
+          <ScrollArea className="flex-1">
+            <div className="p-6">
+              {astTree ? (
+                <ASTTreeNode node={astTree} />
+              ) : (
+                <div className="flex items-center justify-center h-full text-zinc-600 text-sm">
+                  {isLoading ? "Loading parser..." : "Write code to see AST"}
+                </div>
+              )}
             </div>
-          </TabsContent>
-        </Tabs>
-      </div>
+          </ScrollArea>
+        </TabsContent>
+
+        {/* S-Expression Tab */}
+        <TabsContent
+          value="sexp"
+          className="flex-1 m-0 overflow-hidden relative data-[state=active]:flex data-[state=active]:flex-col"
+        >
+          <Button
+            variant="ghost"
+            size="icon"
+            className="absolute top-4 right-4 z-10 h-7 w-7 bg-zinc-900/90 hover:bg-zinc-800 border border-zinc-700"
+            onClick={handleCopySexp}
+          >
+            {copied ? (
+              <CheckIcon className="size-3 text-green-400" />
+            ) : (
+              <CopyIcon className="size-3 text-zinc-400" />
+            )}
+          </Button>
+          <ScrollArea className="flex-1">
+            <pre className="p-6 text-xs font-mono text-zinc-400 whitespace-pre-wrap break-all">
+              {sexp || "No S-expression to display"}
+            </pre>
+          </ScrollArea>
+        </TabsContent>
+
+        {/* Code Context Tab */}
+        {/* Code Context Tab */}
+        <TabsContent
+          value="context"
+          className="flex-1 m-0 overflow-hidden data-[state=active]:flex data-[state=active]:flex-col"
+        >
+          <CodeContextViewer
+            context={codeContext}
+            isAnalyzing={isAnalyzing}
+            error={analysisError}
+          />
+        </TabsContent>
+
+        {/* Complexity Tab */}
+        <TabsContent
+          value="complexity"
+          className="flex-1 m-0 overflow-hidden data-[state=active]:flex data-[state=active]:flex-col"
+        >
+          <ComplexityViewer
+            complexity={complexityResult}
+            isAnalyzing={false} // Since it's synchronous after parse
+            error={null}
+          />
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

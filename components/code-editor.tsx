@@ -12,10 +12,13 @@ export default function CodeEditor() {
   const [output, setOutput] = useState("");
   const [language, setLanguage] = useState("javascript");
   const [editorWidth, setEditorWidth] = useState(40);
+  const [outputHeight, setOutputHeight] = useState(40); // Height of output panel when AST is shown
   const [isDragging, setIsDragging] = useState(false);
+  const [isDraggingVertical, setIsDraggingVertical] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
   const [showAST, setShowAST] = useState(true);
   const containerRef = useRef<HTMLDivElement>(null);
+  const rightPanelRef = useRef<HTMLDivElement>(null);
 
   // Check which languages can run client-side (in browser)
   const canRunClientSide = (lang: string): boolean => {
@@ -29,12 +32,12 @@ export default function CodeEditor() {
 
   const runCode = async () => {
     if (!code.trim()) {
-      setOutput("⚠ Error: No code to execute");
+      setOutput("Ã¢Å¡  Error: No code to execute");
       return;
     }
 
     setIsRunning(true);
-    setOutput("⏳ Executing code...");
+    setOutput("Ã¢ÂÂ³ Executing code...");
 
     try {
       // Client-side execution (JavaScript/TypeScript)
@@ -47,11 +50,11 @@ export default function CodeEditor() {
       }
       // Unsupported language
       else {
-        setOutput(`⚠ Error: Language "${language}" is not supported yet`);
+        setOutput(`Ã¢Å¡  Error: Language "${language}" is not supported yet`);
         setIsRunning(false);
       }
     } catch (error) {
-      setOutput(`⚠ Unexpected Error: ${error instanceof Error ? error.message : String(error)}`);
+      setOutput(`Ã¢Å¡  Unexpected Error: ${error instanceof Error ? error.message : String(error)}`);
       setIsRunning(false);
     }
   };
@@ -84,9 +87,9 @@ export default function CodeEditor() {
       console.log = originalLog;
       console.error = originalError;
 
-      setOutput(logs.join('\n') || '✓ Code executed successfully (no output)');
+      setOutput(logs.join('\n') || 'Ã¢Å“â€œ Code executed successfully (no output)');
     } catch (error) {
-      setOutput(`⚠ Error: ${error instanceof Error ? error.message : String(error)}`);
+      setOutput(`Ã¢Å¡  Error: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
       setIsRunning(false);
     }
@@ -127,7 +130,7 @@ export default function CodeEditor() {
         formattedOutput = 'Code executed successfully (no output)';
       }
 
-      formattedOutput += `\n\n⏱Execution time: ${result.executionTime}`;
+      formattedOutput += `\n\nÃ¢ÂÂ±Execution time: ${result.executionTime}`;
       formattedOutput += `\nExit code: ${result.exitCode}`;
 
       setOutput(formattedOutput);
@@ -136,17 +139,17 @@ export default function CodeEditor() {
       if (error instanceof Error) {
         if (error.message.includes('Failed to fetch')) {
           setOutput(
-            `⚠ Connection Error: Cannot connect to backend server.\n\n` +
+            `Ã¢Å¡  Connection Error: Cannot connect to backend server.\n\n` +
             `Make sure the backend is running:\n` +
             `  cd solace-backend\n` +
             `  npm start\n\n` +
             `Backend URL: ${BACKEND_URL}`
           );
         } else {
-          setOutput(`⚠ Error: ${error.message}`);
+          setOutput(`Ã¢Å¡  Error: ${error.message}`);
         }
       } else {
-        setOutput(`⚠ Error: ${String(error)}`);
+        setOutput(`Ã¢Å¡  Error: ${String(error)}`);
       }
     } finally {
       setIsRunning(false);
@@ -154,13 +157,28 @@ export default function CodeEditor() {
   };
 
   const handleMouseMove = (e: MouseEvent) => {
-    if (!isDragging || !containerRef.current) return;
+    if (!containerRef.current) return;
 
-    const containerRect = containerRef.current.getBoundingClientRect();
-    const newWidth = ((e.clientX - containerRect.left) / containerRect.width) * 100;
+    if (isDragging) {
+      const containerRect = containerRef.current.getBoundingClientRect();
+      const newWidth = ((e.clientX - containerRect.left) / containerRect.width) * 100;
 
-    if (newWidth >= 20 && newWidth <= 70) {
-      setEditorWidth(newWidth);
+      if (newWidth >= 20 && newWidth <= 70) {
+        setEditorWidth(newWidth);
+      }
+    }
+  };
+
+  const handleVerticalMouseMove = (e: MouseEvent) => {
+    if (!rightPanelRef.current) return;
+
+    if (isDraggingVertical) {
+      const panelRect = rightPanelRef.current.getBoundingClientRect();
+      const newHeight = ((e.clientY - panelRect.top) / panelRect.height) * 100;
+
+      if (newHeight >= 20 && newHeight <= 80) {
+        setOutputHeight(newHeight);
+      }
     }
   };
 
@@ -172,16 +190,43 @@ export default function CodeEditor() {
       document.body.style.userSelect = 'none';
     } else {
       document.removeEventListener('mousemove', handleMouseMove);
-      document.body.style.cursor = '';
-      document.body.style.userSelect = '';
+      if (!isDraggingVertical) {
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+      }
     }
 
     return () => {
       document.removeEventListener('mousemove', handleMouseMove);
-      document.body.style.cursor = '';
-      document.body.style.userSelect = '';
+      if (!isDraggingVertical) {
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+      }
     };
-  }, [isDragging]);
+  }, [isDragging, isDraggingVertical]);
+
+  useEffect(() => {
+    if (isDraggingVertical) {
+      document.addEventListener('mousemove', handleVerticalMouseMove);
+      document.addEventListener('mouseup', () => setIsDraggingVertical(false));
+      document.body.style.cursor = 'row-resize';
+      document.body.style.userSelect = 'none';
+    } else {
+      document.removeEventListener('mousemove', handleVerticalMouseMove);
+      if (!isDragging) {
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+      }
+    }
+
+    return () => {
+      document.removeEventListener('mousemove', handleVerticalMouseMove);
+      if (!isDragging) {
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+      }
+    };
+  }, [isDraggingVertical, isDragging]);
 
   // Get button text and status
   const getRunButtonInfo = () => {
@@ -242,13 +287,13 @@ export default function CodeEditor() {
 
           {/* Execution mode indicator */}
           {canRunClientSide(language) && (
-            <span className="text-xs text-green-500">🟢 Runs in browser</span>
+            <span className="text-xs text-green-500">Ã°Å¸Å¸Â¢ Runs in browser</span>
           )}
           {canRunOnBackend(language) && (
-            <span className="text-xs text-blue-500">🐳 Runs on server</span>
+            <span className="text-xs text-blue-500">Ã°Å¸ÂÂ³ Runs on server</span>
           )}
           {!canRunClientSide(language) && !canRunOnBackend(language) && (
-            <span className="text-xs text-yellow-500">⚠️ Not supported yet</span>
+            <span className="text-xs text-yellow-500">Ã¢Å¡ Ã¯Â¸Â Not supported yet</span>
           )}
 
           {/* Run button */}
@@ -308,13 +353,14 @@ export default function CodeEditor() {
 
         {/* Right Panel - Output and/or AST */}
         <div
+          ref={rightPanelRef}
           className="flex flex-col bg-[#0a0a0a]"
           style={{ width: `${100 - editorWidth}%` }}
         >
           {showAST ? (
             <div className="flex flex-col h-full">
-              {/* Output Panel - Takes 40% when AST is shown */}
-              <div className="flex flex-col border-b border-zinc-800" style={{ height: '40%' }}>
+              {/* Output Panel - Resizable height when AST is shown */}
+              <div className="flex flex-col border-b border-zinc-800" style={{ height: `${outputHeight}%` }}>
                 <div className="border-b border-zinc-800 bg-[#0f0f0f] px-6 py-2">
                   <span className="text-sm font-medium text-zinc-400">Output</span>
                 </div>
@@ -331,10 +377,10 @@ export default function CodeEditor() {
                         </p>
                         <p className="text-xs text-zinc-700">
                           {canRunClientSide(language)
-                            ? '• Runs instantly in your browser'
+                            ? 'Ã¢â‚¬Â¢ Runs instantly in your browser'
                             : canRunOnBackend(language)
-                              ? '• Requires backend server to be running'
-                              : '• This language is not supported yet'}
+                              ? 'Ã¢â‚¬Â¢ Requires backend server to be running'
+                              : 'Ã¢â‚¬Â¢ This language is not supported yet'}
                         </p>
                       </div>
                     </div>
@@ -342,7 +388,13 @@ export default function CodeEditor() {
                 </div>
               </div>
 
-              {/* AST Panel - Takes 60% when shown */}
+              {/* Vertical Resizable Divider */}
+              <div
+                className="h-1 cursor-row-resize bg-zinc-800 hover:bg-blue-500 transition-colors"
+                onMouseDown={() => setIsDraggingVertical(true)}
+              />
+
+              {/* AST Panel - Takes remaining space */}
               <div className="flex-1 min-h-0">
                 <TreeSitterAnalyzer code={code} language={language} />
               </div>
@@ -366,10 +418,10 @@ export default function CodeEditor() {
                       </p>
                       <p className="text-xs text-zinc-700">
                         {canRunClientSide(language)
-                          ? '• Runs instantly in your browser'
+                          ? 'Ã¢â‚¬Â¢ Runs instantly in your browser'
                           : canRunOnBackend(language)
-                            ? '• Requires backend server to be running'
-                            : '• This language is not supported yet'}
+                            ? 'Ã¢â‚¬Â¢ Requires backend server to be running'
+                            : 'Ã¢â‚¬Â¢ This language is not supported yet'}
                       </p>
                     </div>
                   </div>

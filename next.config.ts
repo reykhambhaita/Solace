@@ -1,8 +1,11 @@
 import type { NextConfig } from 'next';
 
 const nextConfig: NextConfig = {
-  turbopack: {},
+  // Set the workspace root to silence the warning
+  // Use a relative path - Next.js will resolve it correctly
+  outputFileTracingRoot: require('path').join(__dirname, '../'),
 
+  turbopack: {},
   webpack: (config, { isServer }: { isServer: boolean }) => {
     if (!isServer) {
       config.resolve.fallback = {
@@ -12,22 +15,18 @@ const nextConfig: NextConfig = {
         crypto: false,
       };
     }
-
     // Enable async WebAssembly support
     config.experiments = {
       asyncWebAssembly: true,
       layers: true, // optional if you use module layers
     };
-
     // Optional: serve .wasm as files in the build
     config.module.rules.push({
       test: /\.wasm$/,
       type: 'webassembly/async',
     });
-
     return config;
   },
-
   // Serve public/wasm properly
   async headers() {
     return [
