@@ -1,9 +1,3 @@
-/**
- * Code Type Detection Component
- * Classifies code as test, script, library, application, or configuration
- * UPDATED: Now uses lossless CSTNode instead of truncated ASTNode
- */
-
 import type { CSTNode } from '../analyzer/semantic-ir';
 import type { SupportedLanguage } from './language-detector';
 import type { LibraryAnalysisResult } from './library-analyzer';
@@ -23,6 +17,7 @@ export interface CodeTypeResult {
   entryPoints?: string[];
   exports?: string[];
 }
+
 
 // Test framework indicators
 const TEST_FRAMEWORKS = new Set([

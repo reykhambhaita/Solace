@@ -320,6 +320,58 @@ export function CodeContextViewer({ context, isAnalyzing, error }: CodeContextVi
                     </div>
                   </div>
                 </div>
+
+                {/* Detailed Code Elements */}
+                {context.paradigm.details && (
+                  <div className="space-y-4 pt-4 border-t border-zinc-800 mt-4">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-semibold text-zinc-500 uppercase tracking-wider">Detailed Breakdown</span>
+                    </div>
+
+                    {/* Classes */}
+                    {context.paradigm.details.classNames && context.paradigm.details.classNames.length > 0 && (
+                      <div className="space-y-2">
+                        <span className="text-xs text-zinc-500">Classes ({context.paradigm.details.classNames.length})</span>
+                        <div className="flex flex-wrap gap-1.5">
+                          {context.paradigm.details.classNames.map((name, idx) => (
+                            <Badge key={idx} variant="outline" className="text-xs border-zinc-700 bg-zinc-800/50 text-purple-300 font-mono">
+                              {name}
+                            </Badge>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Functions */}
+                    {context.paradigm.details.functionNames && context.paradigm.details.functionNames.length > 0 && (
+                      <div className="space-y-2">
+                        <span className="text-xs text-zinc-500">Functions ({context.paradigm.details.functionNames.length})</span>
+                        <div className="flex flex-wrap gap-1.5">
+                          {context.paradigm.details.functionNames.map((name, idx) => (
+                            <Badge key={idx} variant="outline" className="text-xs border-zinc-700 bg-zinc-800/50 text-blue-300 font-mono">
+                              {name}()
+                            </Badge>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Loops */}
+                    {context.paradigm.details.loopTypes && context.paradigm.details.loopTypes.length > 0 && (
+                      <div className="space-y-2">
+                        <span className="text-xs text-zinc-500">Loops ({context.paradigm.details.loopTypes.length})</span>
+                        <div className="grid grid-cols-2 gap-2">
+                          {context.paradigm.details.loopTypes.map((loop, idx) => (
+                            <div key={idx} className="flex items-center justify-between px-2 py-1.5 rounded bg-zinc-800/30 border border-zinc-800/50">
+                              <span className="text-xs text-orange-300 font-mono">{loop.type}</span>
+                              <span className="text-[10px] text-zinc-500">line {loop.line + 1}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             </CollapsibleContent>
           </div>

@@ -56,6 +56,11 @@ export function analyzeCodeContext(
             mutations: 0,
             loops: 0,
           },
+          details: {
+            classNames: [],
+            functionNames: [],
+            loopTypes: [],
+          },
         },
         codeType: {
           type: 'unknown',

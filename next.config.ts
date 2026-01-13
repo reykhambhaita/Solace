@@ -1,9 +1,10 @@
 import type { NextConfig } from 'next';
+import path from 'path';
 
 const nextConfig: NextConfig = {
   // Set the workspace root to silence the warning
   // Use a relative path - Next.js will resolve it correctly
-  outputFileTracingRoot: require('path').join(__dirname, '../'),
+  outputFileTracingRoot: path.join(process.cwd(), '../'),
 
   turbopack: {},
   webpack: (config, { isServer }: { isServer: boolean }) => {

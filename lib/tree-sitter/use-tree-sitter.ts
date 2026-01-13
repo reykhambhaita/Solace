@@ -13,7 +13,6 @@ interface TreeSitterState {
 
 interface ParseResult {
   tree: Parser.Tree | null;
-  sexp: string;
   rootNode: Parser.SyntaxNode | null;
   parseTime: number;
   // NEW: Add lossless CST for analysis
@@ -157,7 +156,6 @@ export function useTreeSitter() {
       if (!parser || !language) {
         return {
           tree: null,
-          sexp: "",
           rootNode: null,
           parseTime: 0,
           cst: null, // NEW
@@ -182,7 +180,6 @@ export function useTreeSitter() {
 
         const result: ParseResult = {
           tree,
-          sexp: tree.rootNode.toString(),
           rootNode: tree.rootNode,
           parseTime,
           cst, // NEW: Lossless CST
@@ -202,7 +199,6 @@ export function useTreeSitter() {
         console.error("[TreeSitter] Parse error:", err);
         return {
           tree: null,
-          sexp: "",
           rootNode: null,
           parseTime: performance.now() - startTime,
           cst: null, // NEW

@@ -50,15 +50,19 @@ export type StatementType =
   | 'expression'
   | 'declaration';
 
+import type { CostExpr } from './cost-expression';
+
 /**
  * Loop bounds representation
  */
 export interface LoopBounds {
-  type: 'constant' | 'input' | 'unknown';
+  type: 'constant' | 'input' | 'symbolic' | 'unknown';
   value?: number; // For constant bounds
   variable?: string; // For input-dependent bounds
-  complexity: string; // e.g., 'O(n)', 'O(log n)', 'O(1)'
+  cost: CostExpr; // Algebraic cost expression
+  boundExpression?: CSTNode; // Original bound expression from CST
 }
+
 
 /**
  * Statement IR
@@ -83,8 +87,13 @@ export interface StatementIR {
   // For conditionals
   branches?: StatementIR[][];
 
+  // Cost tracking
+  cost?: CostExpr; // Time complexity cost
+  spaceCost?: CostExpr; // Space complexity cost
+
   children: StatementIR[];
 }
+
 
 /**
  * Block IR - represents a code block

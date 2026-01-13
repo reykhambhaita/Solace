@@ -1,8 +1,9 @@
 "use client";
 
-import { TreeSitterAnalyzer } from "@/components/tree-sitter-demo";
+import { CodeContextViewer } from "@/components/CodeContextViewer";
+import { useCodeContext } from "@/lib/analyzer/context-detector";
 import { Editor } from "@monaco-editor/react";
-import { Binary, Loader2, Play } from "lucide-react";
+import { Brain, Loader2, Play } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3001';
@@ -12,13 +13,14 @@ export default function CodeEditor() {
   const [output, setOutput] = useState("");
   const [language, setLanguage] = useState("javascript");
   const [editorWidth, setEditorWidth] = useState(40);
-  const [outputHeight, setOutputHeight] = useState(40); // Height of output panel when AST is shown
+  const [activeTab, setActiveTab] = useState<"output" | "context">("output");
   const [isDragging, setIsDragging] = useState(false);
-  const [isDraggingVertical, setIsDraggingVertical] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
-  const [showAST, setShowAST] = useState(true);
   const containerRef = useRef<HTMLDivElement>(null);
   const rightPanelRef = useRef<HTMLDivElement>(null);
+
+  // Use the context hook for code analysis
+  const { context: codeContext, isAnalyzing, error: analysisError } = useCodeContext(code);
 
   // Check which languages can run client-side (in browser)
   const canRunClientSide = (lang: string): boolean => {
@@ -32,12 +34,12 @@ export default function CodeEditor() {
 
   const runCode = async () => {
     if (!code.trim()) {
-      setOutput("Ã¢Å¡  Error: No code to execute");
+      setOutput("Error: No code to execute");
       return;
     }
 
     setIsRunning(true);
-    setOutput("Ã¢ÂÂ³ Executing code...");
+    setOutput("Executing code...");
 
     try {
       // Client-side execution (JavaScript/TypeScript)
@@ -50,11 +52,11 @@ export default function CodeEditor() {
       }
       // Unsupported language
       else {
-        setOutput(`Ã¢Å¡  Error: Language "${language}" is not supported yet`);
+        setOutput(`Error: Language "${language}" is not supported yet`);
         setIsRunning(false);
       }
     } catch (error) {
-      setOutput(`Ã¢Å¡  Unexpected Error: ${error instanceof Error ? error.message : String(error)}`);
+      setOutput(`Unexpected Error: ${error instanceof Error ? error.message : String(error)}`);
       setIsRunning(false);
     }
   };
@@ -87,9 +89,9 @@ export default function CodeEditor() {
       console.log = originalLog;
       console.error = originalError;
 
-      setOutput(logs.join('\n') || 'Ã¢Å“â€œ Code executed successfully (no output)');
+      setOutput(logs.join('\n') || 'Code executed successfully (no output)');
     } catch (error) {
-      setOutput(`Ã¢Å¡  Error: ${error instanceof Error ? error.message : String(error)}`);
+      setOutput(` Error: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
       setIsRunning(false);
     }
@@ -130,7 +132,7 @@ export default function CodeEditor() {
         formattedOutput = 'Code executed successfully (no output)';
       }
 
-      formattedOutput += `\n\nÃ¢ÂÂ±Execution time: ${result.executionTime}`;
+      formattedOutput += `\n\nExecution time: ${result.executionTime}`;
       formattedOutput += `\nExit code: ${result.exitCode}`;
 
       setOutput(formattedOutput);
@@ -139,17 +141,17 @@ export default function CodeEditor() {
       if (error instanceof Error) {
         if (error.message.includes('Failed to fetch')) {
           setOutput(
-            `Ã¢Å¡  Connection Error: Cannot connect to backend server.\n\n` +
+            `Connection Error: Cannot connect to backend server.\n\n` +
             `Make sure the backend is running:\n` +
             `  cd solace-backend\n` +
             `  npm start\n\n` +
             `Backend URL: ${BACKEND_URL}`
           );
         } else {
-          setOutput(`Ã¢Å¡  Error: ${error.message}`);
+          setOutput(`Error: ${error.message}`);
         }
       } else {
-        setOutput(`Ã¢Å¡  Error: ${String(error)}`);
+        setOutput(`Error: ${String(error)}`);
       }
     } finally {
       setIsRunning(false);
@@ -169,19 +171,6 @@ export default function CodeEditor() {
     }
   };
 
-  const handleVerticalMouseMove = (e: MouseEvent) => {
-    if (!rightPanelRef.current) return;
-
-    if (isDraggingVertical) {
-      const panelRect = rightPanelRef.current.getBoundingClientRect();
-      const newHeight = ((e.clientY - panelRect.top) / panelRect.height) * 100;
-
-      if (newHeight >= 20 && newHeight <= 80) {
-        setOutputHeight(newHeight);
-      }
-    }
-  };
-
   useEffect(() => {
     if (isDragging) {
       document.addEventListener('mousemove', handleMouseMove);
@@ -190,43 +179,16 @@ export default function CodeEditor() {
       document.body.style.userSelect = 'none';
     } else {
       document.removeEventListener('mousemove', handleMouseMove);
-      if (!isDraggingVertical) {
-        document.body.style.cursor = '';
-        document.body.style.userSelect = '';
-      }
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
     }
 
     return () => {
       document.removeEventListener('mousemove', handleMouseMove);
-      if (!isDraggingVertical) {
-        document.body.style.cursor = '';
-        document.body.style.userSelect = '';
-      }
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
     };
-  }, [isDragging, isDraggingVertical]);
-
-  useEffect(() => {
-    if (isDraggingVertical) {
-      document.addEventListener('mousemove', handleVerticalMouseMove);
-      document.addEventListener('mouseup', () => setIsDraggingVertical(false));
-      document.body.style.cursor = 'row-resize';
-      document.body.style.userSelect = 'none';
-    } else {
-      document.removeEventListener('mousemove', handleVerticalMouseMove);
-      if (!isDragging) {
-        document.body.style.cursor = '';
-        document.body.style.userSelect = '';
-      }
-    }
-
-    return () => {
-      document.removeEventListener('mousemove', handleVerticalMouseMove);
-      if (!isDragging) {
-        document.body.style.cursor = '';
-        document.body.style.userSelect = '';
-      }
-    };
-  }, [isDraggingVertical, isDragging]);
+  }, [isDragging]);
 
   // Get button text and status
   const getRunButtonInfo = () => {
@@ -273,27 +235,15 @@ export default function CodeEditor() {
         </div>
 
         <div className="flex items-center gap-3">
-          {/* AST Toggle */}
-          <button
-            onClick={() => setShowAST(!showAST)}
-            className={`flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition-all ${showAST
-              ? 'bg-zinc-800 text-white'
-              : 'text-zinc-400 hover:bg-zinc-900 hover:text-white'
-              }`}
-          >
-            <Binary className="h-4 w-4" />
-            AST
-          </button>
-
           {/* Execution mode indicator */}
           {canRunClientSide(language) && (
-            <span className="text-xs text-green-500">Ã°Å¸Å¸Â¢ Runs in browser</span>
+            <span className="text-xs text-green-500">• Runs in browser</span>
           )}
           {canRunOnBackend(language) && (
-            <span className="text-xs text-blue-500">Ã°Å¸ÂÂ³ Runs on server</span>
+            <span className="text-xs text-blue-500">• Runs on server</span>
           )}
           {!canRunClientSide(language) && !canRunOnBackend(language) && (
-            <span className="text-xs text-yellow-500">Ã¢Å¡ Ã¯Â¸Â Not supported yet</span>
+            <span className="text-xs text-yellow-500">• Not supported yet</span>
           )}
 
           {/* Run button */}
@@ -308,7 +258,7 @@ export default function CodeEditor() {
         </div>
       </div>
 
-      {/* Editor, Output, and AST */}
+      {/* Editor and Output */}
       <div ref={containerRef} className="flex flex-1 min-h-0">
         {/* Editor Panel */}
         <div
@@ -330,7 +280,7 @@ export default function CodeEditor() {
                 fontSize: 14,
                 fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
                 lineNumbers: "on",
-                scrollBeyondLastLine: false,
+                scrollBeyondLastLine: true,
                 automaticLayout: true,
                 tabSize: 2,
                 wordWrap: "on",
@@ -340,6 +290,11 @@ export default function CodeEditor() {
                 cursorSmoothCaretAnimation: "on",
                 renderLineHighlight: "all",
                 bracketPairColorization: { enabled: true },
+                scrollbar: {
+                  vertical: "visible",
+                  useShadows: true,
+                  verticalScrollbarSize: 10,
+                },
               }}
             />
           </div>
@@ -351,61 +306,43 @@ export default function CodeEditor() {
           onMouseDown={() => setIsDragging(true)}
         />
 
-        {/* Right Panel - Output and/or AST */}
+        {/* Right Panel - Tabbed Output/Context */}
         <div
           ref={rightPanelRef}
           className="flex flex-col bg-[#0a0a0a]"
           style={{ width: `${100 - editorWidth}%` }}
         >
-          {showAST ? (
-            <div className="flex flex-col h-full">
-              {/* Output Panel - Resizable height when AST is shown */}
-              <div className="flex flex-col border-b border-zinc-800" style={{ height: `${outputHeight}%` }}>
-                <div className="border-b border-zinc-800 bg-[#0f0f0f] px-6 py-2">
-                  <span className="text-sm font-medium text-zinc-400">Output</span>
-                </div>
-                <div className="flex-1 overflow-auto p-6">
-                  {output ? (
-                    <pre className="font-mono text-sm text-zinc-300 whitespace-pre-wrap">
-                      {output}
-                    </pre>
-                  ) : (
-                    <div className="flex h-full items-center justify-center">
-                      <div className="text-center">
-                        <p className="text-sm text-zinc-600 mb-2">
-                          Run your code to see the output here
-                        </p>
-                        <p className="text-xs text-zinc-700">
-                          {canRunClientSide(language)
-                            ? 'Ã¢â‚¬Â¢ Runs instantly in your browser'
-                            : canRunOnBackend(language)
-                              ? 'Ã¢â‚¬Â¢ Requires backend server to be running'
-                              : 'Ã¢â‚¬Â¢ This language is not supported yet'}
-                        </p>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
+          {/* Tab Headers */}
+          <div className="flex border-b border-zinc-800 bg-[#0f0f0f]">
+            <button
+              onClick={() => setActiveTab("output")}
+              className={`flex items-center gap-2 px-6 py-3 text-sm font-medium transition-colors border-b-2 ${activeTab === "output"
+                ? "border-blue-500 text-white bg-zinc-900/50"
+                : "border-transparent text-zinc-400 hover:text-white hover:bg-zinc-900/30"
+                }`}
+            >
+              <Play className="h-4 w-4" />
+              Output
+            </button>
+            <button
+              onClick={() => setActiveTab("context")}
+              className={`flex items-center gap-2 px-6 py-3 text-sm font-medium transition-colors border-b-2 ${activeTab === "context"
+                ? "border-blue-500 text-white bg-zinc-900/50"
+                : "border-transparent text-zinc-400 hover:text-white hover:bg-zinc-900/30"
+                }`}
+            >
+              <Brain className="h-4 w-4" />
+              Context
+              {isAnalyzing && (
+                <div className="animate-spin rounded-full h-3 w-3 border-b border-blue-500" />
+              )}
+            </button>
+          </div>
 
-              {/* Vertical Resizable Divider */}
-              <div
-                className="h-1 cursor-row-resize bg-zinc-800 hover:bg-blue-500 transition-colors"
-                onMouseDown={() => setIsDraggingVertical(true)}
-              />
-
-              {/* AST Panel - Takes remaining space */}
-              <div className="flex-1 min-h-0">
-                <TreeSitterAnalyzer code={code} language={language} />
-              </div>
-            </div>
-          ) : (
-            /* Output Panel - Full height when AST is hidden */
-            <div className="flex flex-col h-full">
-              <div className="border-b border-zinc-800 bg-[#0f0f0f] px-6 py-2">
-                <span className="text-sm font-medium text-zinc-400">Output</span>
-              </div>
-              <div className="flex-1 overflow-auto p-6">
+          {/* Tab Content */}
+          <div className="flex-1 overflow-hidden">
+            {activeTab === "output" ? (
+              <div className="flex-1 h-full overflow-auto p-6">
                 {output ? (
                   <pre className="font-mono text-sm text-zinc-300 whitespace-pre-wrap">
                     {output}
@@ -418,17 +355,23 @@ export default function CodeEditor() {
                       </p>
                       <p className="text-xs text-zinc-700">
                         {canRunClientSide(language)
-                          ? 'Ã¢â‚¬Â¢ Runs instantly in your browser'
+                          ? '• Runs instantly in your browser'
                           : canRunOnBackend(language)
-                            ? 'Ã¢â‚¬Â¢ Requires backend server to be running'
-                            : 'Ã¢â‚¬Â¢ This language is not supported yet'}
+                            ? '• Requires backend server to be running'
+                            : '• This language is not supported yet'}
                       </p>
                     </div>
                   </div>
                 )}
               </div>
-            </div>
-          )}
+            ) : (
+              <CodeContextViewer
+                context={codeContext}
+                isAnalyzing={isAnalyzing}
+                error={analysisError}
+              />
+            )}
+          </div>
         </div>
       </div>
     </div>
