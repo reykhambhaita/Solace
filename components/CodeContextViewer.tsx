@@ -13,6 +13,7 @@ import { Progress } from "@/components/ui/progress";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   AlertCircle,
+  Brain,
   CheckCircle,
   ChevronDown,
   ChevronRight,
@@ -86,6 +87,164 @@ export function CodeContextViewer({ context, isAnalyzing, error }: CodeContextVi
             {context.analysisTime.toFixed(1)}ms
           </div>
         </div>
+
+        {/* Enhanced LLM Context & Review-IR */}
+        <Collapsible open={true}>
+          <div className="rounded-lg border border-zinc-800 bg-zinc-900/50">
+            <CollapsibleTrigger className="flex w-full items-center justify-between p-4 hover:bg-zinc-800/50 transition-colors">
+              <div className="flex items-center gap-3">
+                <Brain className="h-5 w-5 text-cyan-400" />
+                <span className="font-medium text-zinc-200">LLM Analysis Context</span>
+              </div>
+            </CollapsibleTrigger>
+            <CollapsibleContent>
+              <div className="px-4 pb-4 space-y-4">
+                {/* Role & Intent */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm text-zinc-400">LLM Role:</span>
+                    <Badge className={`${context.llmContext.role === 'refactor' ? 'bg-green-500/20 text-green-400' :
+                      context.llmContext.role === 'review-only' ? 'bg-blue-500/20 text-blue-400' :
+                        'bg-yellow-500/20 text-yellow-400'
+                      }`}>
+                      {context.llmContext.role}
+                    </Badge>
+                  </div>
+
+                  <div className="space-y-1">
+                    <span className="text-xs text-zinc-500">Code Intent:</span>
+                    <div className="text-sm text-zinc-300 bg-zinc-800/30 p-2 rounded">
+                      {context.llmContext.intent.semanticDescription}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Readiness Breakdown */}
+                <div className="space-y-2 pt-2 border-t border-zinc-800">
+                  <span className="text-xs font-semibold text-zinc-500 uppercase">Readiness Scores</span>
+
+                  <div className="grid grid-cols-3 gap-2">
+                    <div className="p-2 rounded bg-zinc-800/30 text-center">
+                      <div className="text-xs text-zinc-500">Review</div>
+                      <div className="text-lg font-semibold text-green-400">
+                        {Math.round(context.llmContext.readiness.reviewReadiness * 100)}%
+                      </div>
+                    </div>
+                    <div className="p-2 rounded bg-zinc-800/30 text-center">
+                      <div className="text-xs text-zinc-500">Refactor</div>
+                      <div className="text-lg font-semibold text-blue-400">
+                        {Math.round(context.llmContext.readiness.refactorReadiness * 100)}%
+                      </div>
+                    </div>
+                    <div className="p-2 rounded bg-zinc-800/30 text-center">
+                      <div className="text-xs text-zinc-500">Execution</div>
+                      <div className="text-lg font-semibold text-purple-400">
+                        {Math.round(context.llmContext.readiness.executionReadiness * 100)}%
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Prompt Hints */}
+                {context.llmContext.promptHints.length > 0 && (
+                  <div className="space-y-2 pt-2 border-t border-zinc-800">
+                    <span className="text-xs text-zinc-500">Guidance for LLM:</span>
+                    {context.llmContext.promptHints.map((hint, idx) => (
+                      <div key={idx} className="flex items-start gap-2 text-xs text-cyan-300 bg-cyan-500/10 p-2 rounded">
+                        <span className="text-cyan-500">→</span>
+                        <span>{hint}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Blocking Issues */}
+                {context.llmContext.readiness.blockingIssues.length > 0 && (
+                  <div className="space-y-2 pt-2 border-t border-zinc-800">
+                    <span className="text-xs text-zinc-500">Blocking Issues:</span>
+                    {context.llmContext.readiness.blockingIssues.map((issue, idx) => (
+                      <div key={idx} className="flex items-start gap-2 text-xs text-red-400 bg-red-500/10 p-2 rounded">
+                        <AlertCircle className="h-3 w-3 mt-0.5 shrink-0" />
+                        <span>{issue}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Determinism Reasoning */}
+                {context.libraries.externalInteractions.determinismReasoning && (
+                  <div className="space-y-2 pt-2 border-t border-zinc-800">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-zinc-500">Determinism:</span>
+                      <Badge variant={context.libraries.externalInteractions.isDeterministic ? 'default' : 'destructive'}>
+                        {context.libraries.externalInteractions.isDeterministic ? 'Deterministic' : 'Non-deterministic'}
+                      </Badge>
+                    </div>
+                    <div className="space-y-1">
+                      {context.libraries.externalInteractions.determinismReasoning.reasoning.map((reason, idx) => (
+                        <div key={idx} className="text-xs text-zinc-400 pl-2 border-l-2 border-zinc-700">
+                          {reason}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Testability */}
+                {context.reviewIR && (
+                  <div className="grid grid-cols-2 gap-2 pt-2 border-t border-zinc-800">
+                    <div className="p-2 rounded bg-zinc-800/30">
+                      <div className="text-xs text-zinc-500">Testability</div>
+                      <div className="text-lg font-semibold text-zinc-300">
+                        {context.reviewIR.quality.testability}
+                      </div>
+                    </div>
+                    <div className="p-2 rounded bg-zinc-800/30">
+                      <div className="text-xs text-zinc-500">Complexity</div>
+                      <div className="text-lg font-semibold text-zinc-300">
+                        {context.reviewIR.quality.controlFlowComplexity}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Magic Values & Silent Behaviors */}
+                {context.reviewIR && (context.reviewIR.elements.magicValues.length > 0 || context.reviewIR.elements.silentBehaviors.length > 0) && (
+                  <div className="space-y-2 pt-2 border-t border-zinc-800">
+                    {context.reviewIR.elements.magicValues.length > 0 && (
+                      <div>
+                        <span className="text-xs text-zinc-500">Magic Values ({context.reviewIR.elements.magicValues.length}):</span>
+                        <div className="flex flex-wrap gap-1 mt-1">
+                          {context.reviewIR.elements.magicValues.slice(0, 5).map((mv, idx) => (
+                            <Badge key={idx} variant="outline" className="text-xs border-yellow-700 text-yellow-400">
+                              {mv.value} {mv.role && `(${mv.role})`}
+                            </Badge>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {context.reviewIR.elements.silentBehaviors.length > 0 && (
+                      <div>
+                        <span className="text-xs text-zinc-500">Silent Behaviors ({context.reviewIR.elements.silentBehaviors.length}):</span>
+                        <div className="space-y-1 mt-1">
+                          {context.reviewIR.elements.silentBehaviors.slice(0, 3).map((sb, idx) => (
+                            <div key={idx} className={`text-xs p-1.5 rounded ${sb.risk === 'high' ? 'bg-red-500/10 text-red-400' :
+                              sb.risk === 'medium' ? 'bg-yellow-500/10 text-yellow-400' :
+                                'bg-zinc-800/50 text-zinc-400'
+                              }`}>
+                              {sb.type} (line {sb.location})
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </CollapsibleContent>
+          </div>
+        </Collapsible>
 
         {/* Language Detection */}
         <Collapsible open={languageOpen} onOpenChange={setLanguageOpen}>
@@ -446,6 +605,9 @@ export function CodeContextViewer({ context, isAnalyzing, error }: CodeContextVi
             </CollapsibleContent>
           </div>
         </Collapsible>
+
+
+
       </div>
     </ScrollArea>
   );

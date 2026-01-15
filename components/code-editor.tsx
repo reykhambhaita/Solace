@@ -1,11 +1,13 @@
 "use client";
 
 import { CodeContextViewer } from "@/components/CodeContextViewer";
+import { CodeReviewViewer } from "@/components/CodeReviewer";
+import { TranslationViewer } from "@/components/TranslationViewer";
 import { useCodeContext } from "@/lib/analyzer/context-detector";
+import { useTranslation } from "@/lib/translation/use-translation";
 import { Editor } from "@monaco-editor/react";
-import { Brain, Loader2, Play } from "lucide-react";
+import { ArrowRightLeft, Brain, Loader2, Play, Sparkles } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3001';
 
 export default function CodeEditor() {
@@ -13,11 +15,19 @@ export default function CodeEditor() {
   const [output, setOutput] = useState("");
   const [language, setLanguage] = useState("javascript");
   const [editorWidth, setEditorWidth] = useState(40);
-  const [activeTab, setActiveTab] = useState<"output" | "context">("output");
-  const [isDragging, setIsDragging] = useState(false);
+  const [activeTab, setActiveTab] = useState<"output" | "context" | "review" | "translate">("output"); const [isDragging, setIsDragging] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
+  const [isReviewing, setIsReviewing] = useState(false);
+  const [reviewResult, setReviewResult] = useState<any>(null);
+  const [reviewError, setReviewError] = useState<string | null>(null);
+  const [reviewMetadata, setReviewMetadata] = useState<any>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const rightPanelRef = useRef<HTMLDivElement>(null);
+  const [targetLanguage, setTargetLanguage] = useState<string>("python");
+  const { translate, isTranslating, result: translationResult, error: translationError, reset: resetTranslation } = useTranslation();
+
+
+
 
   // Use the context hook for code analysis
   const { context: codeContext, isAnalyzing, error: analysisError } = useCodeContext(code);
@@ -91,7 +101,7 @@ export default function CodeEditor() {
 
       setOutput(logs.join('\n') || 'Code executed successfully (no output)');
     } catch (error) {
-      setOutput(` Error: ${error instanceof Error ? error.message : String(error)}`);
+      setOutput(`Error: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
       setIsRunning(false);
     }
@@ -158,6 +168,72 @@ export default function CodeEditor() {
     }
   };
 
+  // Get code review from backend using Qwen 3-32B
+  const getCodeReview = async () => {
+    if (!code.trim()) {
+      setReviewError("No code to review");
+      return;
+    }
+
+    if (!codeContext || !codeContext.reviewIR) {
+      setReviewError("Please wait for code analysis to complete");
+      return;
+    }
+
+    setIsReviewing(true);
+    setReviewError(null);
+    setActiveTab("review");
+
+    try {
+      const response = await fetch(`${BACKEND_URL}/api/review`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          reviewIR: codeContext.reviewIR,
+          codeContext: codeContext,
+          prunedTree: null, // Let backend generate it
+          fileContents: code
+        })
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || `Server error: ${response.status}`);
+      }
+
+      const result = await response.json();
+
+      if (result.success && result.review) {
+        setReviewResult(result.review);
+        setReviewMetadata(result.metadata);
+        setReviewError(null);
+      } else {
+        throw new Error('Invalid response from server');
+      }
+
+    } catch (error) {
+      if (error instanceof Error) {
+        if (error.message.includes('Failed to fetch')) {
+          setReviewError(
+            `Connection Error: Cannot connect to backend server.\n\n` +
+            `Make sure the backend is running with GROQ_API_KEY set:\n` +
+            `  cd solace-backend\n` +
+            `  GROQ_API_KEY=your_key npm start\n\n` +
+            `Backend URL: ${BACKEND_URL}`
+          );
+        } else {
+          setReviewError(error.message);
+        }
+      } else {
+        setReviewError(String(error));
+      }
+    } finally {
+      setIsReviewing(false);
+    }
+  };
+
   const handleMouseMove = (e: MouseEvent) => {
     if (!containerRef.current) return;
 
@@ -171,6 +247,25 @@ export default function CodeEditor() {
     }
   };
 
+
+  const handleTranslate = async () => {
+    if (!code.trim()) {
+      return;
+    }
+
+    if (!codeContext || !codeContext.reviewIR) {
+      return;
+    }
+
+    setActiveTab("translate");
+
+    await translate({
+      sourceCode: code,
+      sourceLanguage: language as any,
+      targetLanguage: targetLanguage as any,
+      reviewIR: codeContext.reviewIR,
+    });
+  };
   useEffect(() => {
     if (isDragging) {
       document.addEventListener('mousemove', handleMouseMove);
@@ -232,6 +327,19 @@ export default function CodeEditor() {
               <option value="php">PHP</option>
             </optgroup>
           </select>
+
+
+          <select
+            value={targetLanguage}
+            onChange={(e) => {
+              setTargetLanguage(e.target.value);
+              resetTranslation();
+            }}
+            className="rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-1.5 text-sm text-white outline-none transition-colors hover:border-zinc-600 focus:border-purple-500"
+          >
+            <option value="typescript">→ TypeScript</option>
+            <option value="python">→ Python</option>
+          </select>
         </div>
 
         <div className="flex items-center gap-3">
@@ -254,6 +362,50 @@ export default function CodeEditor() {
           >
             {runButtonInfo.icon}
             {runButtonInfo.text}
+          </button>
+
+          {/* Review button */}
+          <button
+            onClick={getCodeReview}
+            disabled={isReviewing || isAnalyzing || !codeContext}
+            className="flex items-center gap-2 rounded-lg bg-cyan-600 px-4 py-2 text-sm font-medium text-white shadow-lg shadow-cyan-500/20 transition-all hover:bg-cyan-500 hover:shadow-cyan-500/30 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {isReviewing ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Sparkles className="h-4 w-4" />
+            )}
+            {isReviewing ? 'Reviewing...' : 'Get Review'}
+          </button>
+
+
+
+          <button
+            onClick={handleTranslate}
+            disabled={isTranslating || isAnalyzing || !codeContext || language === targetLanguage}
+            className="flex items-center gap-2 rounded-lg bg-purple-600 px-4 py-2 text-sm font-medium text-white shadow-lg shadow-purple-500/20 transition-all hover:bg-purple-500 hover:shadow-purple-500/30 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {isTranslating ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <ArrowRightLeft className="h-4 w-4" />
+            )}
+            {isTranslating ? 'Translating...' : 'Translate'}
+          </button>
+
+// Add the translation tab button (in the tab headers section):
+          <button
+            onClick={() => setActiveTab("translate")}
+            className={`flex items-center gap-2 px-6 py-3 text-sm font-medium transition-colors border-b-2 ${activeTab === "translate"
+              ? "border-purple-500 text-white bg-zinc-900/50"
+              : "border-transparent text-zinc-400 hover:text-white hover:bg-zinc-900/30"
+              }`}
+          >
+            <ArrowRightLeft className="h-4 w-4" />
+            Translate
+            {isTranslating && (
+              <div className="animate-spin rounded-full h-3 w-3 border-b border-purple-500" />
+            )}
           </button>
         </div>
       </div>
@@ -306,7 +458,7 @@ export default function CodeEditor() {
           onMouseDown={() => setIsDragging(true)}
         />
 
-        {/* Right Panel - Tabbed Output/Context */}
+        {/* Right Panel - Tabbed Output/Context/Review */}
         <div
           ref={rightPanelRef}
           className="flex flex-col bg-[#0a0a0a]"
@@ -337,6 +489,19 @@ export default function CodeEditor() {
                 <div className="animate-spin rounded-full h-3 w-3 border-b border-blue-500" />
               )}
             </button>
+            <button
+              onClick={() => setActiveTab("review")}
+              className={`flex items-center gap-2 px-6 py-3 text-sm font-medium transition-colors border-b-2 ${activeTab === "review"
+                ? "border-cyan-500 text-white bg-zinc-900/50"
+                : "border-transparent text-zinc-400 hover:text-white hover:bg-zinc-900/30"
+                }`}
+            >
+              <Sparkles className="h-4 w-4" />
+              AI Review
+              {isReviewing && (
+                <div className="animate-spin rounded-full h-3 w-3 border-b border-cyan-500" />
+              )}
+            </button>
           </div>
 
           {/* Tab Content */}
@@ -364,11 +529,29 @@ export default function CodeEditor() {
                   </div>
                 )}
               </div>
-            ) : (
+            ) : activeTab === "context" ? (
               <CodeContextViewer
                 context={codeContext}
                 isAnalyzing={isAnalyzing}
                 error={analysisError}
+              />
+            ) : activeTab === "translate" ? (
+              <TranslationViewer
+                sourceCode={code}
+                sourceLanguage={language}
+                targetLanguage={targetLanguage}
+                translatedCode={translationResult?.translatedCode || null}
+                warnings={translationResult?.warnings || []}
+                metadata={translationResult?.metadata}
+                isLoading={isTranslating}
+                error={translationError}
+              />
+            ) : (
+              <CodeReviewViewer
+                review={reviewResult}
+                metadata={reviewMetadata}
+                isLoading={isReviewing}
+                error={reviewError}
               />
             )}
           </div>

@@ -16,7 +16,18 @@ export interface CodeTypeResult {
   indicators: string[];
   entryPoints?: string[];
   exports?: string[];
+  executionIntent?: ExecutionIntent;
 }
+
+export interface ExecutionIntent {
+  isRunnable: boolean;
+  confidence: number;
+  entryPointType: 'explicit-main' | 'top-level' | 'module-export' | 'none';
+  runnabilityIndicators: string[];
+  blockers: string[];
+}
+
+
 
 
 // Test framework indicators
@@ -136,6 +147,82 @@ function detectTest(
   const confidence = Math.min(score / 100, 1.0);
   return { isTest: score > 40, confidence, indicators };
 }
+
+
+
+export function detectExecutionIntent(
+  cst: CSTNode,
+  language: SupportedLanguage,
+  codeType: CodeType,
+  entryPoints: string[]
+): ExecutionIntent {
+  const indicators: string[] = [];
+  const blockers: string[] = [];
+  let score = 0;
+
+  // Explicit entry points boost score significantly
+  if (entryPoints.length > 0) {
+    score += 40;
+    indicators.push(`has ${entryPoints[0]}`);
+  }
+
+  // Top-level executable statements
+  const codeText = cst.text.toLowerCase();
+  const hasTopLevelCode =
+    !codeText.match(/^\s*(import|export|class|interface|type|function\s+\w+)/m) ||
+    codeText.includes('console.log') ||
+    codeText.includes('print(');
+
+  if (hasTopLevelCode) {
+    score += 20;
+    indicators.push('top-level statements');
+  }
+
+  // Library/module indicators are blockers
+  if (codeType === 'library') {
+    score -= 30;
+    blockers.push('library structure');
+  }
+
+  // Heavy exports without entry point
+  const exportCount = (codeText.match(/\bexport\b/g) || []).length;
+  if (exportCount > 3 && entryPoints.length === 0) {
+    score -= 20;
+    blockers.push('module exports without main');
+  }
+
+  // Type-only files
+  if (language === 'typescript' &&
+    codeText.match(/^\s*(interface|type)\s/m) &&
+    !codeText.includes('function') &&
+    !codeText.includes('const')) {
+    score -= 40;
+    blockers.push('type definitions only');
+  }
+
+  // Script or application types are likely runnable
+  if (codeType === 'script' || codeType === 'application') {
+    score += 25;
+    indicators.push(`${codeType} structure`);
+  }
+
+  const confidence = Math.max(0, Math.min(1, (score + 50) / 100));
+
+  let entryPointType: ExecutionIntent['entryPointType'] = 'none';
+  if (entryPoints.length > 0) entryPointType = 'explicit-main';
+  else if (hasTopLevelCode) entryPointType = 'top-level';
+  else if (exportCount > 0) entryPointType = 'module-export';
+
+  return {
+    isRunnable: score > 20,
+    confidence: Math.round(confidence * 100) / 100,
+    entryPointType,
+    runnabilityIndicators: indicators,
+    blockers,
+  };
+}
+
+
 
 /**
  * Detect entry points in code
@@ -386,6 +473,9 @@ export function detectCodeType(
   // Detect application
   const applicationResult = detectApplication(entryPoints, exportCount, libraries, cst);
 
+
+
+
   // Choose the most confident type
   const results = [
     { type: 'script' as CodeType, ...scriptResult },
@@ -394,6 +484,7 @@ export function detectCodeType(
   ].sort((a, b) => b.confidence - a.confidence);
 
   const best = results[0];
+  const executionIntent = detectExecutionIntent(cst, language, best.type, entryPoints);
 
   return {
     type: best.confidence > 0.5 ? best.type : 'unknown',
@@ -401,5 +492,6 @@ export function detectCodeType(
     indicators: best.indicators.slice(0, 3),
     entryPoints: entryPoints.length > 0 ? entryPoints : undefined,
     exports: exports.length > 0 ? exports : undefined,
+    executionIntent, // NEW
   };
 }

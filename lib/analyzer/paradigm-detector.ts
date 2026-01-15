@@ -13,6 +13,43 @@ export interface ParadigmScore {
   indicators: string[];
 }
 
+
+export type ExecutionModel =
+  | 'synchronous'
+  | 'asynchronous'
+  | 'event-driven'
+  | 'concurrent'
+  | 'mixed';
+
+
+
+
+export interface ExecutionModelAnalysis {
+  primary: ExecutionModel;
+  confidence: number;
+  indicators: string[];
+  asyncPatterns: number;
+  eventPatterns: number;
+  concurrencyPatterns: number;
+}
+
+export type StateLifetime =
+  | 'stateless'
+  | 'local-ephemeral'
+  | 'local-escaping'
+  | 'global-immutable'
+  | 'global-mutable'
+  | 'shared-mutable';
+
+export interface StateAnalysis {
+  lifetime: StateLifetime;
+  confidence: number;
+  globalVars: number;
+  mutabilityScore: number;
+  indicators: string[];
+  escapingReferences: number; // References that escape local scope
+  closureCaptures: number; // Captured variables in closures
+}
 export interface ParadigmAnalysisResult {
   primary: ParadigmScore;
   secondary?: ParadigmScore;
@@ -29,6 +66,8 @@ export interface ParadigmAnalysisResult {
     functionNames: string[];
     loopTypes: Array<{ type: string; line: number }>;
   };
+  executionModel: ExecutionModelAnalysis; // NEW
+  state: StateAnalysis;
 }
 
 // Language-specific node type mappings
@@ -458,6 +497,159 @@ function calculateConfidence(score: number, totalPatterns: number): number {
   return Math.min(Math.round(confidence * 100) / 100, 1.0);
 }
 
+
+
+
+
+
+/**
+ * Analyze execution model from code patterns
+ */
+function analyzeExecutionModel(cst: CSTNode, language: SupportedLanguage): ExecutionModelAnalysis {
+  let asyncPatterns = 0;
+  let eventPatterns = 0;
+  let concurrencyPatterns = 0;
+  const indicators: string[] = [];
+
+  const codeText = cst.text.toLowerCase();
+
+  // Async patterns
+  const asyncKeywords = ['async', 'await', 'promise', 'then(', 'catch('];
+  asyncPatterns = asyncKeywords.filter(kw => codeText.includes(kw)).length;
+
+  if (language === 'python') {
+    if (codeText.includes('asyncio') || codeText.includes('async def')) asyncPatterns += 2;
+  }
+  if (language === 'go') {
+    if (codeText.includes('go ') || codeText.includes('chan ')) asyncPatterns += 2;
+  }
+  if (language === 'rust') {
+    if (codeText.includes('async fn') || codeText.includes('.await')) asyncPatterns += 2;
+  }
+
+  // Event patterns
+  const eventKeywords = ['addeventlistener', '.on(', '.once(', 'emitter', 'observable', 'subject'];
+  eventPatterns = eventKeywords.filter(kw => codeText.includes(kw)).length;
+
+  // Concurrency patterns
+  const concurrencyKeywords = ['thread', 'mutex', 'lock', 'atomic', 'concurrent', 'parallel'];
+  concurrencyPatterns = concurrencyKeywords.filter(kw => codeText.includes(kw)).length;
+
+  if (language === 'go') {
+    if (codeText.includes('sync.') || codeText.includes('goroutine')) concurrencyPatterns += 2;
+  }
+
+  // Determine primary model
+  let primary: ExecutionModel = 'synchronous';
+  let maxScore = 0;
+
+  if (asyncPatterns > maxScore) {
+    primary = 'asynchronous';
+    maxScore = asyncPatterns;
+    indicators.push(`${asyncPatterns} async patterns`);
+  }
+  if (eventPatterns > maxScore) {
+    primary = 'event-driven';
+    maxScore = eventPatterns;
+    indicators.push(`${eventPatterns} event handlers`);
+  }
+  if (concurrencyPatterns > maxScore) {
+    primary = 'concurrent';
+    maxScore = concurrencyPatterns;
+    indicators.push(`${concurrencyPatterns} concurrency primitives`);
+  }
+
+  // Mixed if multiple patterns present
+  const totalPatterns = asyncPatterns + eventPatterns + concurrencyPatterns;
+  if (totalPatterns > 3 && maxScore < totalPatterns * 0.7) {
+    primary = 'mixed';
+    indicators.push('multiple execution models');
+  }
+
+  const confidence = Math.min(1, (maxScore + totalPatterns) / 10);
+
+  return {
+    primary,
+    confidence: Math.round(confidence * 100) / 100,
+    indicators: indicators.slice(0, 3),
+    asyncPatterns,
+    eventPatterns,
+    concurrencyPatterns,
+  };
+}
+
+/**
+ * Analyze state lifetime and mutability with escaping detection
+ */
+function analyzeState(cst: CSTNode, language: SupportedLanguage, counts: PatternCounts): StateAnalysis {
+  const indicators: string[] = [];
+  let globalVars = 0;
+  let mutabilityScore = 0;
+  let escapingReferences = 0;
+  let closureCaptures = 0;
+
+  const codeText = cst.text.toLowerCase();
+
+  // Count global declarations
+  if (language === 'typescript') {
+    globalVars = (codeText.match(/^(let|var)\s+\w+/gm) || []).length;
+    const constCount = (codeText.match(/^const\s+\w+/gm) || []).length;
+    mutabilityScore = globalVars > 0 ? (globalVars / (globalVars + constCount)) * 100 : 0;
+
+    // Detect escaping through returns
+    escapingReferences = (codeText.match(/return\s+\{[^}]*\}/g) || []).length;
+    escapingReferences += (codeText.match(/return\s+\[/g) || []).length;
+
+    // Detect closures
+    closureCaptures = (codeText.match(/=>\s*{[^}]*\w+[^}]*}/g) || []).length;
+  }
+
+  if (language === 'python') {
+    globalVars = (codeText.match(/^[A-Z_][A-Z0-9_]*\s*=/gm) || []).length;
+    closureCaptures = (codeText.match(/nonlocal\s+/g) || []).length;
+  }
+
+  if (language === 'go') {
+    globalVars = (codeText.match(/^var\s+\w+/gm) || []).length;
+    escapingReferences = (codeText.match(/return\s+&/g) || []).length;
+  }
+
+  // Mutation indicators
+  mutabilityScore += (counts.mutations / (counts.functions + 1)) * 50;
+  mutabilityScore = Math.min(100, mutabilityScore);
+
+  // Determine lifetime with finer granularity
+  let lifetime: StateLifetime = 'stateless';
+
+  if (globalVars > 3 && mutabilityScore > 40) {
+    lifetime = 'global-mutable';
+    indicators.push(`${globalVars} mutable globals`);
+  } else if (globalVars > 2 && mutabilityScore <= 40) {
+    lifetime = 'global-immutable';
+    indicators.push(`${globalVars} immutable globals`);
+  } else if (escapingReferences > 2 || closureCaptures > 2) {
+    lifetime = 'local-escaping';
+    indicators.push('escaping references detected');
+  } else if (counts.mutations > counts.functions && globalVars === 0) {
+    lifetime = 'shared-mutable';
+    indicators.push('local mutation patterns');
+  } else if (counts.functions > 0 && escapingReferences === 0) {
+    lifetime = 'local-ephemeral';
+    indicators.push('ephemeral local state');
+  }
+
+  const confidence = globalVars > 0 || counts.functions > 0 ? 0.85 : 0.4;
+
+  return {
+    lifetime,
+    confidence,
+    globalVars,
+    mutabilityScore: Math.round(mutabilityScore),
+    indicators: indicators.slice(0, 2),
+    escapingReferences,
+    closureCaptures,
+  };
+}
 /**
  * MAIN EXPORT: Analyze paradigm from CST
  */
@@ -506,6 +698,8 @@ export function analyzeParadigm(
       indicators: getIndicators(paradigms[1].paradigm, counts),
     };
   }
+  const executionModel = analyzeExecutionModel(cst, language);
+  const state = analyzeState(cst, language, counts);
 
   return {
     primary,
@@ -523,5 +717,7 @@ export function analyzeParadigm(
       functionNames: counts.functionNames,
       loopTypes: counts.loopTypes,
     },
+    executionModel,
+    state,
   };
 }

@@ -1,3 +1,5 @@
+require('dotenv').config();
+
 const express = require('express');
 const cors = require('cors');
 const { exec } = require('child_process');
@@ -8,19 +10,35 @@ const path = require('path');
 const app = express();
 const PORT = process.env.PORT || 3001;
 
+// Groq API configuration
+const GROQ_API_KEY = process.env.GROQ_API_KEY;
+const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
+
 // Middleware
-app.use(cors());
+app.use(cors({
+  origin: '*', // Allow all origins for development
+  methods: ['GET', 'POST', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
 app.use(express.json({ limit: '10mb' }));
+
+// Add logging middleware to debug routes
+app.use((req, res, next) => {
+  console.log(`${new Date().toISOString()} - ${req.method} ${req.path}`);
+  next();
+});
 
 // Health check endpoint
 app.get('/health', (req, res) => {
   res.json({
     status: 'ok',
     message: 'Solace backend is running',
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
+    groqConfigured: !!GROQ_API_KEY
   });
 });
 
+// Code execution endpoint (existing)
 app.post('/api/execute', async (req, res) => {
   const { code, language } = req.body;
 
@@ -45,6 +63,519 @@ app.post('/api/execute', async (req, res) => {
   }
 });
 
+// NEW: Code review endpoint using Groq API
+app.post('/api/review', async (req, res) => {
+  console.log('[Review] Request received');
+
+  const { reviewIR, codeContext, prunedTree, fileContents } = req.body;
+
+  if (!reviewIR || !fileContents) {
+    console.log('[Review] Missing required fields');
+    return res.status(400).json({
+      error: 'Missing required fields: reviewIR and fileContents'
+    });
+  }
+
+  if (!GROQ_API_KEY) {
+    console.log('[Review] GROQ_API_KEY not configured');
+    return res.status(500).json({
+      error: 'GROQ_API_KEY not configured',
+      message: 'Please set GROQ_API_KEY environment variable'
+    });
+  }
+
+  console.log(`[${new Date().toISOString()}] Starting code review (${fileContents.length} chars)`);
+
+  try {
+    const prompt = buildReviewPrompt({
+      reviewIR,
+      codeContext,
+      prunedTree: prunedTree || pruneTreeForLLM(reviewIR),
+      fileContents
+    });
+
+    console.log(`[${new Date().toISOString()}] Calling Groq API with qwen-3-32b...`);
+
+    const response = await fetch(GROQ_API_URL, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${GROQ_API_KEY}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: 'qwen/qwen3-32b',
+        messages: [
+          { role: 'system', content: prompt.system },
+          { role: 'user', content: prompt.user }
+        ],
+        temperature: 0.1,
+        max_tokens: 2048,
+        top_p: 0.9,
+        stream: false
+      })
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(`Groq API error: ${response.status} ${response.statusText} - ${JSON.stringify(errorData)}`);
+    }
+
+    const data = await response.json();
+
+    if (!data.choices || !data.choices[0] || !data.choices[0].message) {
+      throw new Error('Invalid response from Groq API');
+    }
+
+    const reviewText = data.choices[0].message.content;
+    const parsedReview = parseReviewResponse(reviewText);
+
+    console.log(`[${new Date().toISOString()}] Review completed. Tokens: ${data.usage?.total_tokens || 'unknown'}`);
+
+    res.json({
+      success: true,
+      review: parsedReview,
+      metadata: {
+        model: 'qwen-3-32b',
+        tokensUsed: data.usage?.total_tokens || 0,
+        promptTokens: data.usage?.prompt_tokens || 0,
+        completionTokens: data.usage?.completion_tokens || 0,
+        timestamp: new Date().toISOString()
+      }
+    });
+
+  } catch (error) {
+    console.error('Review error:', error);
+    res.status(500).json({
+      error: error.message || 'Review failed',
+      details: error.toString()
+    });
+  }
+});
+
+
+app.post('/api/translate', async (req, res) => {
+  console.log('[Translation] Request received');
+
+  const { sourceCode, sourceLanguage, targetLanguage, reviewIR } = req.body;
+
+  if (!sourceCode || !sourceLanguage || !targetLanguage || !reviewIR) {
+    console.log('[Translation] Missing required fields');
+    return res.status(400).json({
+      error: 'Missing required fields: sourceCode, sourceLanguage, targetLanguage, reviewIR'
+    });
+  }
+
+  if (!GROQ_API_KEY) {
+    console.log('[Translation] GROQ_API_KEY not configured');
+    return res.status(500).json({
+      error: 'GROQ_API_KEY not configured',
+      message: 'Please set GROQ_API_KEY environment variable'
+    });
+  }
+
+  console.log(`[${new Date().toISOString()}] Translating ${sourceLanguage} to ${targetLanguage}`);
+
+  try {
+    const prompt = buildTranslationPrompt({
+      sourceCode,
+      sourceLanguage,
+      targetLanguage,
+      reviewIR
+    });
+
+    console.log(`[${new Date().toISOString()}] Calling Groq API with qwen-3-32b...`);
+
+    const response = await fetch(GROQ_API_URL, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${GROQ_API_KEY}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: 'qwen/qwen3-32b',
+        messages: [
+          { role: 'system', content: prompt.system },
+          { role: 'user', content: prompt.user }
+        ],
+        temperature: 0.1,
+        max_tokens: 3000,
+        top_p: 0.9,
+        stream: false
+      })
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(`Groq API error: ${response.status} ${response.statusText} - ${JSON.stringify(errorData)}`);
+    }
+
+    const data = await response.json();
+
+    if (!data.choices || !data.choices[0] || !data.choices[0].message) {
+      throw new Error('Invalid response from Groq API');
+    }
+
+    // Extract ONLY the code block content
+    let content = data.choices[0].message.content;
+
+    // Remove <think> tags and their content (common in Qwen/DeepSeek)
+    content = content.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+
+    let translatedCode = content;
+
+    // Try to extract from code blocks first
+    const codeBlockMatch = content.match(/```(?:\w+)?\n([\s\S]*?)```/);
+    if (codeBlockMatch && codeBlockMatch[1]) {
+      translatedCode = codeBlockMatch[1].trim();
+    } else {
+      // Fallback: strip backticks if no block structure found, but warn
+      console.log('[Translation] No code block found, returning raw trimmed content');
+      translatedCode = content.replace(/```/g, '').trim();
+    }
+
+    const warnings = extractTranslationWarnings(sourceLanguage, targetLanguage);
+
+    console.log(`[${new Date().toISOString()}] Translation completed. Tokens: ${data.usage?.total_tokens || 'unknown'}`);
+
+    res.json({
+      success: true,
+      translatedCode,
+      warnings,
+      metadata: {
+        model: 'qwen-3-32b',
+        tokensUsed: data.usage?.total_tokens || 0,
+        promptTokens: data.usage?.prompt_tokens || 0,
+        completionTokens: data.usage?.completion_tokens || 0,
+        timestamp: new Date().toISOString(),
+        sourceLanguage,
+        targetLanguage
+      }
+    });
+
+  } catch (error) {
+    console.error('Translation error:', error);
+    res.status(500).json({
+      error: error.message || 'Translation failed',
+      details: error.toString()
+    });
+  }
+});
+
+// Helper function: Build translation prompt
+function buildTranslationPrompt({ sourceCode, sourceLanguage, targetLanguage, reviewIR }) {
+  const adapters = {
+    typescript: {
+      function: 'function name(args): returnType { }',
+      if: 'if (condition) { }',
+      for: 'for (let i = 0; i < n; i++) { }',
+      errorThrow: 'throw new Error(message)',
+      errorCatch: 'catch (error: Error)',
+      naming: 'camelCase for variables/functions, PascalCase for classes'
+    },
+    python: {
+      function: 'def function_name(args):',
+      if: 'if condition:',
+      for: 'for item in iterable:',
+      errorThrow: 'raise Exception(message)',
+      errorCatch: 'except Exception as e',
+      naming: 'snake_case for variables/functions, PascalCase for classes'
+    }
+  };
+
+  const targetAdapter = adapters[targetLanguage];
+  const patterns = getRelevantPatterns(reviewIR, sourceLanguage, targetLanguage);
+
+  const systemPrompt = `You are a code translator specializing in ${sourceLanguage} to ${targetLanguage} conversion.
+
+CRITICAL CONSTRAINTS (from ReviewIR):
+- MUST preserve determinism: ${reviewIR.behavior.isDeterministic ? 'Code is deterministic' : 'Code has non-deterministic elements'}
+- MUST maintain execution model: ${reviewIR.behavior.executionModel}
+- MUST preserve state lifetime: ${reviewIR.state.lifetime}
+- MUST maintain function count: ${reviewIR.structure.functions} functions
+- MUST preserve decision points: approximately ${reviewIR.elements.decisionRules.length} decision points
+
+TARGET LANGUAGE SYNTAX (${targetLanguage}):
+- Function: ${targetAdapter.function}
+- If statement: ${targetAdapter.if}
+- For loop: ${targetAdapter.for}
+- Throw error: ${targetAdapter.errorThrow}
+- Catch error: ${targetAdapter.errorCatch}
+- Naming: ${targetAdapter.naming}
+
+${patterns}
+
+OUTPUT REQUIREMENTS:
+1. Output ONLY the translated code inside a single markdown code block
+2. NO conversational text (e.g., "Here is the code", "I hope this helps")
+3. NO explanations outside the code block
+4. Preserve all logic and behavior
+5. Use idiomatic ${targetLanguage} patterns`;
+
+  const userPrompt = `Translate this ${sourceLanguage} code to ${targetLanguage}:
+
+\`\`\`${sourceLanguage}
+${sourceCode}
+\`\`\`
+
+Return only the code block.`;
+
+  return { system: systemPrompt, user: userPrompt };
+}
+
+// Helper: Get relevant patterns
+function getRelevantPatterns(reviewIR, sourceLanguage, targetLanguage) {
+  const patterns = [];
+
+  if (reviewIR.behavior.executionModel.includes('async')) {
+    patterns.push('ASYNC: TypeScript async/await → Python async/await with asyncio');
+  }
+
+  if (sourceLanguage === 'typescript' && targetLanguage === 'python') {
+    patterns.push('ARRAYS: .map() → list comprehension OR map()');
+    patterns.push('ARRAYS: .filter() → list comprehension with if OR filter()');
+    patterns.push('NULL: === null → is None');
+  } else if (sourceLanguage === 'python' && targetLanguage === 'typescript') {
+    patterns.push('LIST COMP: [x for x in items] → items.map(x => x)');
+    patterns.push('NULL: is None → === null');
+  }
+
+  return patterns.length > 0 ? `\nPATTERN EQUIVALENTS:\n${patterns.join('\n')}` : '';
+}
+
+// Helper: Extract warnings
+function extractTranslationWarnings(sourceLanguage, targetLanguage) {
+  const warnings = {
+    'typescript-python': [
+      'TypeScript interfaces have no direct Python equivalent - consider dataclasses',
+      'Array methods like .push() differ - use .append() in Python'
+    ],
+    'python-typescript': [
+      'Python list comprehensions need conversion to .map()/.filter()',
+      'Python tuple unpacking requires explicit destructuring'
+    ]
+  };
+
+  const key = `${sourceLanguage}-${targetLanguage}`;
+  return warnings[key] || [];
+}
+
+
+
+
+// Helper function: Build review prompt
+function buildReviewPrompt(input) {
+  const analysisContext = extractAnalysisContext(input.reviewIR);
+  const { reviewIR } = input;
+
+  const systemPrompt = `STRICT JSON OUTPUT MODE - DATA FILLING ONLY
+
+You must output ONLY a valid JSON object matching this exact schema.
+No explanations, no thinking, no extra text, no markdown code blocks.
+
+REQUIRED JSON SCHEMA:
+{
+"complexity": "string - Describe time and space complexity using Big-O notation. Explicitly distinguish between worst-case and amortized complexity when applicable. Use full sentences and include both analyses if they differ. Minimum one complete sentence. NO ordinals, indexes, or section numbers.",
+  "purpose": "string - Full sentence describing whether code clearly expresses its purpose and if naming is semantically meaningful. Minimum one complete sentence. NO ordinals, indexes, or section numbers.",
+  "behavioral": "string - Full sentence analysis of behavioral correctness, race conditions, and edge case handling. Minimum one complete sentence. NO ordinals, indexes, or section numbers.",
+  "risks": "string - Full sentence description of hidden risks including magic values, silent behaviors, state mutations, or error handling gaps. Use exactly 'No issues found.' if none exist. NO ordinals, indexes, or section numbers.",
+  "edgeCases": "string - Full sentence description of edge cases and boundary conditions including input validation, null handling, and concurrency issues. Use exactly 'No issues found.' if none exist. NO ordinals, indexes, or section numbers.",
+  "summary": "string - Full sentence overall code quality assessment with critical issues and improvement suggestions. Minimum one complete sentence. NO ordinals, indexes, or section numbers."
+}
+
+STRICTLY FORBIDDEN:
+- Ordinal numbers as content (e.g., "2.", "3.", "item 1", "section 2")
+- Section references or list indexes
+- Empty strings or whitespace-only values
+- Placeholder text or generic responses
+- Any text outside the JSON object
+- Extra keys not in the schema above
+- Markdown code blocks or formatting
+- Thinking tags or meta-commentary
+
+STRICTLY REQUIRED:
+- Each field must contain at least one complete, grammatically correct sentence
+- Use exactly "No issues found." when a category has no findings
+- Only output valid JSON matching the schema above
+- All content must be semantic and actionable, not structural references
+
+Fill the JSON object based on the code analysis below.`;
+
+  const userPrompt = `ANALYSIS CONTEXT (use this data to fill JSON fields):
+
+Determinism: ${analysisContext.determinism.value}
+Execution Model: ${analysisContext.executionModel}
+State Lifetime: ${analysisContext.stateLifetime}
+Side Effects: ${analysisContext.sideEffects.length > 0 ? analysisContext.sideEffects.join(', ') : 'none'}
+
+CODE METRICS:
+- Language: ${reviewIR.language}
+- Paradigm: ${reviewIR.structure.paradigm}
+- Lines: ${reviewIR.structure.linesOfCode}
+- Functions: ${reviewIR.structure.functions}
+- Classes: ${reviewIR.structure.classes}
+- Control Flow Complexity: ${reviewIR.quality.controlFlowComplexity}
+- Testability Score: ${reviewIR.quality.testability}/100
+- Error Handling: ${reviewIR.quality.errorHandling}
+- Mutability: ${reviewIR.state.mutability}%
+
+DETECTED ELEMENTS:
+- Decision Rules: ${reviewIR.elements.decisionRules.length}
+- Magic Values: ${reviewIR.elements.magicValues.length}
+- Silent Behaviors: ${reviewIR.elements.silentBehaviors.length}
+
+CODE:
+\`\`\`${reviewIR.language}
+${input.fileContents}
+\`\`\`
+
+Fill the JSON fields now. Output ONLY the JSON object, nothing else.`;
+
+  return {
+    system: systemPrompt,
+    user: userPrompt
+  };
+}
+
+// Helper function: Extract analysis context
+function extractAnalysisContext(reviewIR) {
+  const classification = reviewIR.behavior.determinismReasons;
+
+  let valueDeterminism = 'deterministic';
+  if (classification.some(r => r.includes('random') || r.includes('time'))) {
+    valueDeterminism = 'weakly-deterministic';
+  } else if (!reviewIR.behavior.isDeterministic) {
+    valueDeterminism = 'value-nondeterministic';
+  }
+
+  let outputOrder = 'stable';
+  if (classification.some(r => r.includes('race') || r.includes('concurrent') || r.includes('async'))) {
+    outputOrder = 'unstable';
+  }
+
+  return {
+    determinism: {
+      value: valueDeterminism,
+      outputOrder,
+      classification: reviewIR.behavior.isDeterministic ? 'fully-deterministic' : 'nondeterministic',
+      confidence: 0.85,
+    },
+    stateLifetime: reviewIR.state.lifetime,
+    executionModel: reviewIR.behavior.executionModel,
+    sideEffects: reviewIR.behavior.sideEffects === 'none' ? [] : [reviewIR.behavior.sideEffects],
+    externalInteractions: reviewIR.behavior.externalInteractions,
+  };
+}
+
+// Helper function: Prune tree for LLM
+function pruneTreeForLLM(reviewIR) {
+  const sections = [];
+
+  sections.push('=== CODE STRUCTURE ===');
+  sections.push(`Language: ${reviewIR.language}`);
+  sections.push(`Type: ${reviewIR.codeType}`);
+  sections.push(`Paradigm: ${reviewIR.structure.paradigm}`);
+  sections.push(`Functions: ${reviewIR.structure.functions}, Classes: ${reviewIR.structure.classes}`);
+  sections.push(`Lines: ${reviewIR.structure.linesOfCode}`);
+  sections.push('');
+
+  if (reviewIR.elements.decisionRules.length > 0) {
+    sections.push('=== DECISION POINTS ===');
+    reviewIR.elements.decisionRules.slice(0, 10).forEach((dr, idx) => {
+      sections.push(`${idx + 1}. Line ${dr.location}: ${dr.condition} → ${dr.outcome}`);
+    });
+    sections.push('');
+  }
+
+  if (reviewIR.elements.magicValues.length > 0) {
+    sections.push('=== LITERAL VALUES ===');
+    reviewIR.elements.magicValues.slice(0, 15).forEach((mv, idx) => {
+      sections.push(`${idx + 1}. Line ${mv.location}: ${mv.value} ${mv.role ? `[${mv.role}]` : ''}`);
+    });
+    sections.push('');
+  }
+
+  sections.push('=== BEHAVIORAL PROPERTIES ===');
+  sections.push(`Determinism: ${reviewIR.behavior.isDeterministic ? 'Yes' : 'No'}`);
+  sections.push(`Execution: ${reviewIR.behavior.executionModel}`);
+  sections.push(`Side Effects: ${reviewIR.behavior.sideEffects}`);
+  sections.push(`State Lifetime: ${reviewIR.state.lifetime}`);
+  sections.push(`Mutability: ${reviewIR.state.mutability}%`);
+
+  return sections.join('\n');
+}
+
+// Helper function: Parse review response (strict JSON mode)
+function parseReviewResponse(response) {
+  try {
+    // Extract JSON from response (handle potential markdown code blocks)
+    let jsonText = response.trim();
+
+    // Remove markdown code blocks if present
+    jsonText = jsonText.replace(/^```json?\s*\n?/i, '').replace(/\n?```\s*$/i, '');
+
+    // Parse JSON
+    const parsed = JSON.parse(jsonText);
+
+    // Validate required fields
+    const requiredFields = ['complexity', 'purpose', 'behavioral', 'risks', 'edgeCases', 'summary'];
+    for (const field of requiredFields) {
+      if (!parsed[field] || typeof parsed[field] !== 'string') {
+        console.warn(`Missing or invalid field: ${field}`);
+        parsed[field] = 'Unable to parse this section.';
+      }
+
+      // Reject ordinal-only content (e.g., "2.", "3", "item 1")
+      const trimmed = parsed[field].trim();
+      if (/^\s*\d+\.?\s*$/.test(trimmed) || /^(item|section|point)\s*\d+/i.test(trimmed)) {
+        console.warn(`Field ${field} contains ordinal reference: "${trimmed}"`);
+        parsed[field] = 'No issues found.';
+      }
+
+      // Ensure minimum content (at least 10 characters for a meaningful sentence)
+      if (trimmed.length < 10 && trimmed !== 'No issues found.') {
+        console.warn(`Field ${field} has insufficient content: "${trimmed}"`);
+        parsed[field] = 'No issues found.';
+      }
+    }
+
+    return {
+      complexity: parsed.complexity,
+      purpose: parsed.purpose,
+      behavioral: parsed.behavioral,
+      risks: parsed.risks,
+      edgeCases: parsed.edgeCases,
+      summary: parsed.summary,
+      raw: response
+    };
+  } catch (error) {
+    console.error('JSON parsing failed:', error.message);
+    console.error('Response was:', response.substring(0, 500));
+
+    // Fallback to safe defaults
+    return {
+      complexity: 'Unable to parse review response. Please try again.',
+      purpose: 'Unable to parse review response. Please try again.',
+      behavioral: 'Unable to parse review response. Please try again.',
+      risks: 'Unable to parse review response. Please try again.',
+      edgeCases: 'Unable to parse review response. Please try again.',
+      summary: 'Unable to parse review response. Please try again.',
+      raw: response
+    };
+  }
+}
+
+
+
+
+
+
+
+
+
+
+
+
+// Existing code execution functions (unchanged)
 async function executeCode(code, language) {
   const startTime = Date.now();
   const executionId = uuidv4();
@@ -53,7 +584,6 @@ async function executeCode(code, language) {
   let filename = `code_${executionId}.${extension}`;
 
   if (language === 'java') {
-    // extract class name from code for java execution
     const classNameMatch = code.match(/(?:public\s+)?class\s+(\w+)/);
     if (classNameMatch) {
       filename = `${classNameMatch[1]}.java`;
@@ -170,6 +700,18 @@ function runDockerCommand(command) {
 }
 
 app.listen(PORT, '0.0.0.0', () => {
+  console.log('=================================');
   console.log('Solace Backend Server Started');
   console.log(`Port: ${PORT}`);
+  console.log(`Groq API: ${GROQ_API_KEY ? 'Configured ✓' : 'NOT CONFIGURED ✗'}`);
+  console.log('=================================');
+  console.log('Available endpoints:');
+  console.log('  GET  /health');
+  console.log('  POST /api/execute');
+  console.log('  POST /api/review');
+  console.log('  POST /api/translate');  // NEW
+  console.log('=================================');
+  if (!GROQ_API_KEY) {
+    console.warn('⚠️  Warning: Set GROQ_API_KEY environment variable to enable code review');
+  }
 });

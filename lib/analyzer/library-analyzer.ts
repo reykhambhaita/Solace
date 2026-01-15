@@ -7,6 +7,23 @@
 import type { SupportedLanguage } from './language-detector';
 import type { CSTNode } from './semantic-ir';
 
+
+export type ExternalInteractionType = 'filesystem' | 'network' | 'database' | 'environment' | 'process' | 'none';
+
+export interface ExternalInteractionAnalysis {
+  types: ExternalInteractionType[];
+  confidence: number;
+  indicators: string[];
+  isDeterministic: boolean;
+  nondeterministicSources: string[];
+}
+
+export interface ErrorHandlingStrategy {
+  approach: 'exceptions' | 'result-types' | 'panic' | 'silent' | 'mixed' | 'unknown';
+  confidence: number;
+  indicators: string[];
+  hasErrorHandling: boolean;
+}
 export interface LibraryInfo {
   name: string;
   category: 'standard' | 'framework' | 'utility' | 'testing' | 'database' | 'ui' | 'unknown';
@@ -22,8 +39,40 @@ export interface LibraryAnalysisResult {
     indicators: string[];
   }[];
   packageManager?: 'npm' | 'pip' | 'cargo' | 'go-mod' | 'maven' | 'gem' | 'composer';
+  externalInteractions: ExternalInteractionAnalysis & { determinismReasoning: DeterminismReasoning }; // UPDATED
+  errorHandling: ErrorHandlingStrategy;
+  outputContract: OutputContract; // NEW
+}
+export interface DeterminismReasoning {
+  isDeterministic: boolean;
+  confidence: number;
+  reasoning: string[];
+  nondeterministicSources: Array<{
+    source: string;
+    severity: 'high' | 'medium' | 'low';
+    explanation: string;
+  }>;
+
+  // Explicit classification metadata
+  classification: {
+    class: 'fully-deterministic' | 'value-deterministic' | 'weakly-deterministic' | 'execution-nondeterministic' | 'value-nondeterministic';
+    valueStability: 'stable' | 'unstable' | 'conditional';
+    orderStability: 'stable' | 'unstable' | 'unordered';
+    hasRaceConditions: boolean;
+    hasTimeDependency: boolean;
+    hasRandomness: boolean;
+    hasExternalState: boolean;
+    llmGuidance: string;
+  };
 }
 
+export interface OutputContract {
+  returnTypes: string[];
+  structure: 'primitive' | 'object' | 'array' | 'union' | 'unknown';
+  semanticMeaning: string;
+  guarantees: string[];
+  uncertainties: string[];
+}
 // Standard library mappings
 const STANDARD_LIBS: Record<SupportedLanguage, Set<string>> = {
   typescript: new Set(['fs', 'path', 'http', 'https', 'util', 'os', 'crypto', 'stream', 'events', 'buffer', 'child_process', 'url', 'querystring', 'readline']),
@@ -383,6 +432,331 @@ function detectFrameworks(
   return frameworks.sort((a, b) => b.confidence - a.confidence);
 }
 
+
+
+
+
+/**
+ * Detect external interactions with determinism reasoning
+ */
+function analyzeExternalInteractions(
+  cst: CSTNode,
+  libraries: LibraryInfo[]
+): ExternalInteractionAnalysis & { determinismReasoning: DeterminismReasoning } {
+  const types = new Set<ExternalInteractionType>();
+  const indicators: string[] = [];
+  const nondeterministicSources: Array<{
+    source: string;
+    severity: 'high' | 'medium' | 'low';
+    explanation: string;
+  }> = [];
+  const reasoning: string[] = [];
+
+  const codeText = cst.text.toLowerCase();
+  const libNames = libraries.map(l => l.name.toLowerCase());
+
+  // Filesystem
+  if (codeText.includes('readfile') || codeText.includes('writefile') ||
+    codeText.includes('fs.') || libNames.some(l => l.includes('fs'))) {
+    types.add('filesystem');
+    indicators.push('file I/O');
+    nondeterministicSources.push({
+      source: 'filesystem',
+      severity: 'high',
+      explanation: 'File contents can change between executions'
+    });
+    reasoning.push('File system state is external and mutable');
+  }
+
+  // Network
+  if (codeText.includes('fetch') || codeText.includes('http') || codeText.includes('axios') ||
+    codeText.includes('request') || libNames.some(l => l.includes('http') || l === 'axios')) {
+    types.add('network');
+    indicators.push('network requests');
+    nondeterministicSources.push({
+      source: 'network',
+      severity: 'high',
+      explanation: 'Network responses vary based on server state and availability'
+    });
+    reasoning.push('Network calls depend on remote state');
+  }
+
+  // Database
+  if (libNames.some(l => l.includes('sql') || l.includes('mongo') || l.includes('redis') || l.includes('db'))) {
+    types.add('database');
+    indicators.push('database access');
+    nondeterministicSources.push({
+      source: 'database',
+      severity: 'high',
+      explanation: 'Database content changes over time'
+    });
+    reasoning.push('Database queries return mutable external state');
+  }
+
+  // Environment
+  if (codeText.includes('process.env') || codeText.includes('os.environ') ||
+    codeText.includes('getenv')) {
+    types.add('environment');
+    indicators.push('environment variables');
+    nondeterministicSources.push({
+      source: 'environment',
+      severity: 'medium',
+      explanation: 'Environment variables differ across deployments'
+    });
+    reasoning.push('Relies on external configuration');
+  }
+
+  // Process
+  if (codeText.includes('process.') || codeText.includes('subprocess') ||
+    codeText.includes('exec') || codeText.includes('spawn')) {
+    types.add('process');
+    indicators.push('process execution');
+    nondeterministicSources.push({
+      source: 'external-process',
+      severity: 'high',
+      explanation: 'External process output is unpredictable'
+    });
+    reasoning.push('Executes external processes with variable output');
+  }
+
+  // Randomness
+  if (codeText.includes('random') || codeText.includes('math.random') ||
+    codeText.includes('uuid')) {
+    nondeterministicSources.push({
+      source: 'randomness',
+      severity: 'high',
+      explanation: 'Uses random number generation'
+    });
+    reasoning.push('Generates random values');
+  }
+
+  // Time
+  if (codeText.includes('date.now') || codeText.includes('datetime') ||
+    codeText.includes('time.time')) {
+    nondeterministicSources.push({
+      source: 'time',
+      severity: 'medium',
+      explanation: 'Depends on current timestamp'
+    });
+    reasoning.push('Reads current time');
+  }
+
+  if (types.size === 0) types.add('none');
+
+  const isDeterministic = nondeterministicSources.length === 0;
+  if (isDeterministic) {
+    reasoning.push('No external dependencies detected');
+    reasoning.push('Output depends only on inputs');
+  }
+
+  const confidence = types.size > 0 || nondeterministicSources.length > 0 ? 0.9 : 0.6;
+
+  // Classify determinism with fine-grained metadata
+  const hasRaceConditions =
+    codeText.includes('thread') ||
+    codeText.includes('async') ||
+    codeText.includes('parallel') ||
+    codeText.includes('concurrent') ||
+    codeText.includes('goroutine') ||
+    codeText.includes('promise.all');
+
+  const hasTimeDependency =
+    nondeterministicSources.some(s => s.source === 'time');
+
+  const hasRandomness =
+    nondeterministicSources.some(s => s.source === 'randomness');
+
+  const hasExternalState =
+    nondeterministicSources.some(s =>
+      ['filesystem', 'network', 'database', 'environment'].includes(s.source)
+    );
+
+  // Determine classification
+  let deterministicClass: DeterminismReasoning['classification']['class'];
+  let valueStability: 'stable' | 'unstable' | 'conditional';
+  let orderStability: 'stable' | 'unstable' | 'unordered';
+  let llmGuidance: string;
+
+  if (isDeterministic) {
+    deterministicClass = 'fully-deterministic';
+    valueStability = 'stable';
+    orderStability = 'stable';
+    llmGuidance = 'Same inputs always produce same outputs in same order. Safe to assume stable behavior.';
+  } else if (hasRaceConditions && !hasRandomness && !hasTimeDependency) {
+    deterministicClass = 'execution-nondeterministic';
+    valueStability = 'stable';
+    orderStability = 'unstable';
+    llmGuidance = 'Values are deterministic but execution order/timing may vary due to concurrency. Do NOT assume stable ordering of async operations.';
+  } else if ((hasRandomness || hasTimeDependency) && !hasExternalState) {
+    deterministicClass = 'weakly-deterministic';
+    valueStability = 'conditional';
+    orderStability = 'stable';
+    llmGuidance = 'Deterministic with fixed seed/timestamp. Different values on each run unless inputs are controlled.';
+  } else if (hasExternalState) {
+    deterministicClass = 'value-nondeterministic';
+    valueStability = 'unstable';
+    orderStability = 'unstable';
+    llmGuidance = 'Depends on external mutable state (filesystem, network, database). Values and order both unpredictable.';
+  } else {
+    deterministicClass = 'value-nondeterministic';
+    valueStability = 'unstable';
+    orderStability = 'stable';
+    llmGuidance = 'Values change between runs. Cannot assume consistent output.';
+  }
+
+  const classification: DeterminismReasoning['classification'] = {
+    class: deterministicClass,
+    valueStability,
+    orderStability,
+    hasRaceConditions,
+    hasTimeDependency,
+    hasRandomness,
+    hasExternalState,
+    llmGuidance,
+  };
+
+  const determinismReasoning: DeterminismReasoning = {
+    isDeterministic,
+    confidence,
+    reasoning: reasoning.slice(0, 3),
+    nondeterministicSources,
+    classification,
+  };
+
+  return {
+    types: Array.from(types),
+    confidence,
+    indicators: indicators.slice(0, 4),
+    isDeterministic,
+    nondeterministicSources: nondeterministicSources.map(s => s.source).slice(0, 3),
+    determinismReasoning,
+  };
+}
+
+/**
+ * Extract output contract from code
+ */
+function extractOutputContract(cst: CSTNode, language: SupportedLanguage): OutputContract {
+  const returnTypes: string[] = [];
+  const guarantees: string[] = [];
+  const uncertainties: string[] = [];
+  const codeText = cst.text;
+
+  // TypeScript return type annotations
+  if (language === 'typescript') {
+    const returnMatches = codeText.match(/:\s*([\w<>[\]|]+)\s*=>/g) ||
+      codeText.match(/\):\s*([\w<>[\]|]+)\s*{/g);
+    if (returnMatches) {
+      returnMatches.forEach(match => {
+        const type = match.match(/:\s*([\w<>[\]|]+)/)?.[1];
+        if (type) returnTypes.push(type);
+      });
+    }
+  }
+
+  // Detect structure from returns
+  const hasReturnObject = /return\s*\{/.test(codeText);
+  const hasReturnArray = /return\s*\[/.test(codeText);
+  const hasReturnPrimitive = /return\s+(\d+|true|false|null|"[^"]*"|'[^']*')/.test(codeText);
+
+  let structure: OutputContract['structure'] = 'unknown';
+  if (hasReturnObject) {
+    structure = 'object';
+    guarantees.push('Returns structured object');
+  } else if (hasReturnArray) {
+    structure = 'array';
+    guarantees.push('Returns array/list');
+  } else if (hasReturnPrimitive) {
+    structure = 'primitive';
+    guarantees.push('Returns primitive value');
+  }
+
+  if (returnTypes.length > 1) {
+    structure = 'union';
+    uncertainties.push('Multiple return types possible');
+  }
+
+  // Semantic meaning heuristics
+  let semanticMeaning = 'Unspecified output';
+  if (codeText.toLowerCase().includes('validate')) {
+    semanticMeaning = 'Validation result (boolean or error)';
+    guarantees.push('Indicates validity');
+  } else if (codeText.toLowerCase().includes('parse')) {
+    semanticMeaning = 'Parsed structured data';
+    guarantees.push('Structured representation of input');
+  } else if (codeText.toLowerCase().includes('format') || codeText.toLowerCase().includes('render')) {
+    semanticMeaning = 'Formatted output string';
+    guarantees.push('Human-readable format');
+  }
+
+  if (!hasReturnObject && !hasReturnArray && !hasReturnPrimitive) {
+    uncertainties.push('No explicit return statements found');
+  }
+
+  return {
+    returnTypes: [...new Set(returnTypes)],
+    structure,
+    semanticMeaning,
+    guarantees,
+    uncertainties,
+  };
+}
+/**
+ * Analyze error handling strategy
+ */
+function analyzeErrorHandling(
+  cst: CSTNode,
+  language: SupportedLanguage
+): ErrorHandlingStrategy {
+  const indicators: string[] = [];
+  const codeText = cst.text.toLowerCase();
+
+  let approach: ErrorHandlingStrategy['approach'] = 'unknown';
+  let hasErrorHandling = false;
+  let score = 0;
+
+  // Exceptions
+  const hasTryCatch = codeText.includes('try') && codeText.includes('catch');
+  const hasThrow = codeText.includes('throw');
+  if (hasTryCatch || hasThrow) {
+    score += 2;
+    indicators.push('try-catch blocks');
+    hasErrorHandling = true;
+  }
+
+  // Result types
+  const hasResultType = codeText.includes('result<') || codeText.includes('option<') ||
+    codeText.includes('either') || codeText.includes('ok(') || codeText.includes('err(');
+  if (hasResultType) {
+    score += 2;
+    indicators.push('result types');
+    hasErrorHandling = true;
+  }
+
+  // Panic
+  const hasPanic = codeText.includes('panic') || codeText.includes('unwrap') ||
+    codeText.includes('expect');
+  if (hasPanic) {
+    score += 1;
+    indicators.push('panic/unwrap');
+  }
+
+  // Determine approach
+  if (hasTryCatch && !hasResultType) approach = 'exceptions';
+  else if (hasResultType && !hasTryCatch) approach = 'result-types';
+  else if (hasPanic && !hasTryCatch && !hasResultType) approach = 'panic';
+  else if ((hasTryCatch || hasResultType) && hasPanic) approach = 'mixed';
+  else if (!hasErrorHandling) approach = 'silent';
+
+  const confidence = score > 0 ? 0.85 : 0.3;
+
+  return {
+    approach,
+    confidence,
+    indicators: indicators.slice(0, 3),
+    hasErrorHandling,
+  };
+}
 /**
  * Analyze libraries from CST
  * UPDATED: Now uses CSTNode instead of ASTNode for lossless analysis
@@ -412,10 +786,16 @@ export function analyzeLibraries(
 
   // Detect package manager
   const packageManager = detectPackageManager(language);
+  const externalInteractions = analyzeExternalInteractions(cst, libraries);
+  const errorHandling = analyzeErrorHandling(cst, language);
+  const outputContract = extractOutputContract(cst, language);
 
   return {
     libraries,
     frameworks,
     packageManager,
+    externalInteractions,
+    errorHandling,
+    outputContract,
   };
 }
