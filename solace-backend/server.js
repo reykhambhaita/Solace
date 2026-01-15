@@ -279,6 +279,70 @@ function buildTranslationPrompt({ sourceCode, sourceLanguage, targetLanguage, re
       errorThrow: 'raise Exception(message)',
       errorCatch: 'except Exception as e',
       naming: 'snake_case for variables/functions, PascalCase for classes'
+    },
+    java: {
+      function: 'public returnType methodName(Type arg) { }',
+      if: 'if (condition) { }',
+      for: 'for (int i = 0; i < n; i++) { }',
+      errorThrow: 'throw new Exception(message)',
+      errorCatch: 'catch (Exception e)',
+      naming: 'camelCase for variables/methods, PascalCase for classes'
+    },
+    go: {
+      function: 'func functionName(arg Type) ReturnType { }',
+      if: 'if condition { }',
+      for: 'for i := 0; i < n; i++ { }',
+      errorThrow: 'return errors.New(message) or panic(message)',
+      errorCatch: 'if err != nil { }',
+      naming: 'camelCase for private, PascalCase for exported'
+    },
+    rust: {
+      function: 'fn function_name(arg: Type) -> ReturnType { }',
+      if: 'if condition { }',
+      for: 'for item in iterable { }',
+      errorThrow: 'return Err(error) or panic!(message)',
+      errorCatch: 'match result { Ok(v) => ..., Err(e) => ... }',
+      naming: 'snake_case for variables/functions, PascalCase for types/traits'
+    },
+    cpp: {
+      function: 'ReturnType functionName(Type arg) { }',
+      if: 'if (condition) { }',
+      for: 'for (int i = 0; i < n; i++) { }',
+      errorThrow: 'throw std::runtime_error(message)',
+      errorCatch: 'catch (const std::exception& e)',
+      naming: 'camelCase or snake_case for variables/functions, PascalCase for classes'
+    },
+    c: {
+      function: 'ReturnType function_name(Type arg) { }',
+      if: 'if (condition) { }',
+      for: 'for (int i = 0; i < n; i++) { }',
+      errorThrow: 'return error_code; // set errno',
+      errorCatch: 'if (ret != 0) { // handle error }',
+      naming: 'snake_case for variables/functions/structs'
+    },
+    ruby: {
+      function: 'def function_name(args)',
+      if: 'if condition',
+      for: 'iterable.each do |item|',
+      errorThrow: 'raise StandardError, message',
+      errorCatch: 'rescue StandardError => e',
+      naming: 'snake_case for variables/methods, PascalCase for classes/modules'
+    },
+    php: {
+      function: 'function functionName($arg)',
+      if: 'if ($condition) { }',
+      for: 'foreach ($iterable as $item) { }',
+      errorThrow: 'throw new Exception($message);',
+      errorCatch: 'catch (Exception $e)',
+      naming: 'camelCase or snake_case for variables/functions, PascalCase for classes'
+    },
+    javascript: {
+      function: 'function name(args) { }',
+      if: 'if (condition) { }',
+      for: 'for (let i = 0; i < n; i++) { }',
+      errorThrow: 'throw new Error(message)',
+      errorCatch: 'catch (error)',
+      naming: 'camelCase for variables/functions, PascalCase for classes'
     }
   };
 
@@ -326,17 +390,135 @@ Return only the code block.`;
 function getRelevantPatterns(reviewIR, sourceLanguage, targetLanguage) {
   const patterns = [];
 
+  // Async patterns
   if (reviewIR.behavior.executionModel.includes('async')) {
-    patterns.push('ASYNC: TypeScript async/await → Python async/await with asyncio');
+    if (targetLanguage === 'python') {
+      patterns.push('ASYNC: async/await → Python async/await with asyncio');
+    } else if (targetLanguage === 'java') {
+      patterns.push('ASYNC: async/await → CompletableFuture or reactive streams');
+    } else if (targetLanguage === 'go') {
+      patterns.push('ASYNC: async/await → goroutines with channels');
+    } else if (targetLanguage === 'rust') {
+      patterns.push('ASYNC: async/await → Rust async/await with tokio');
+    }
   }
 
-  if (sourceLanguage === 'typescript' && targetLanguage === 'python') {
-    patterns.push('ARRAYS: .map() → list comprehension OR map()');
-    patterns.push('ARRAYS: .filter() → list comprehension with if OR filter()');
-    patterns.push('NULL: === null → is None');
-  } else if (sourceLanguage === 'python' && targetLanguage === 'typescript') {
-    patterns.push('LIST COMP: [x for x in items] → items.map(x => x)');
-    patterns.push('NULL: is None → === null');
+  // TypeScript to other languages
+  if (sourceLanguage === 'typescript') {
+    if (targetLanguage === 'python') {
+      patterns.push('ARRAYS: .map() → list comprehension OR map()');
+      patterns.push('ARRAYS: .filter() → list comprehension with if OR filter()');
+      patterns.push('NULL: === null → is None');
+    } else if (targetLanguage === 'java') {
+      patterns.push('ARRAYS: .map() → Stream.map()');
+      patterns.push('ARRAYS: .filter() → Stream.filter()');
+      patterns.push('NULL: === null → == null');
+    } else if (targetLanguage === 'go') {
+      patterns.push('ARRAYS: .map() → for loop with append');
+      patterns.push('NULL: === null → == nil');
+    } else if (targetLanguage === 'rust') {
+      patterns.push('ARRAYS: .map() → iter().map()');
+      patterns.push('ARRAYS: .filter() → iter().filter()');
+      patterns.push('NULL: === null → Option::None or is_none()');
+    }
+  }
+
+  // Python to other languages
+  if (sourceLanguage === 'python') {
+    if (targetLanguage === 'typescript') {
+      patterns.push('LIST COMP: [x for x in items] → items.map(x => x)');
+      patterns.push('NULL: is None → === null');
+    } else if (targetLanguage === 'java') {
+      patterns.push('LIST COMP: [x for x in items] → stream().map()');
+      patterns.push('NULL: is None → == null');
+    } else if (targetLanguage === 'go') {
+      patterns.push('LIST COMP: [x for x in items] → for loop');
+      patterns.push('NULL: is None → == nil');
+    } else if (targetLanguage === 'rust') {
+      patterns.push('LIST COMP: [x for x in items] → iter().map()');
+      patterns.push('NULL: is None → Option::None');
+    }
+  }
+
+  // Java to other languages
+  if (sourceLanguage === 'java') {
+    if (targetLanguage === 'typescript') {
+      patterns.push('STREAMS: stream().map() → .map()');
+      patterns.push('NULL: == null → === null');
+    } else if (targetLanguage === 'python') {
+      patterns.push('STREAMS: stream().map() → list comprehension');
+      patterns.push('NULL: == null → is None');
+    } else if (targetLanguage === 'go') {
+      patterns.push('STREAMS: stream().map() → for loop');
+      patterns.push('NULL: == null → == nil');
+    } else if (targetLanguage === 'rust') {
+      patterns.push('STREAMS: stream().map() → iter().map()');
+      patterns.push('NULL: == null → Option::None');
+    }
+  }
+
+  // Go to other languages
+  if (sourceLanguage === 'go') {
+    if (targetLanguage === 'typescript') {
+      patterns.push('ERROR: if err != nil → try/catch');
+      patterns.push('NULL: == nil → === null');
+    } else if (targetLanguage === 'python') {
+      patterns.push('ERROR: if err != nil → try/except');
+      patterns.push('NULL: == nil → is None');
+    } else if (targetLanguage === 'java') {
+      patterns.push('ERROR: if err != nil → try/catch');
+      patterns.push('NULL: == nil → == null');
+    } else if (targetLanguage === 'rust') {
+      patterns.push('ERROR: if err != nil → Result<T, E>');
+      patterns.push('NULL: == nil → Option::None');
+    }
+  }
+
+  // Rust to other languages
+  if (sourceLanguage === 'rust') {
+    if (targetLanguage === 'typescript') {
+      patterns.push('RESULT: Result<T, E> → try/catch or nullable');
+      patterns.push('OPTION: Option<T> → T | null');
+    } else if (targetLanguage === 'python') {
+      patterns.push('RESULT: Result<T, E> → try/except or Optional');
+      patterns.push('OPTION: Option<T> → Optional[T]');
+    } else if (targetLanguage === 'java') {
+      patterns.push('RESULT: Result<T, E> → try/catch or Optional');
+      patterns.push('OPTION: Option<T> → Optional<T>');
+    } else if (targetLanguage === 'go') {
+      patterns.push('RESULT: Result<T, E> → (value, error)');
+      patterns.push('OPTION: Option<T> → pointer or zero value');
+    }
+  }
+
+  // C++ to other languages
+  if (sourceLanguage === 'cpp') {
+    patterns.push('MEMORY: shared_ptr/unique_ptr → GC or manual memory management');
+    patterns.push('CONST: const correctness → may need explicit immutability');
+  }
+
+  // C to other languages
+  if (sourceLanguage === 'c') {
+    patterns.push('MEMORY: malloc/free → GC or classes');
+    patterns.push('STRUCTS: struct → class or object');
+  }
+
+  // Ruby to other languages
+  if (sourceLanguage === 'ruby') {
+    patterns.push('BLOCKS: do |x| ... end → arrow function or lambda');
+    patterns.push('SYMBOLS: :symbol → string or constant');
+  }
+
+  // PHP to other languages
+  if (sourceLanguage === 'php') {
+    patterns.push('ARRAYS: Associative arrays → Map or Object');
+    patterns.push('VARS: $variable → variable (no prefix)');
+  }
+
+  // JavaScript to other languages
+  if (sourceLanguage === 'javascript') {
+    patterns.push('TYPES: Dynamic typing → Static types (infer generic/any)');
+    patterns.push('PROTOTYPES: Prototype chain → Classes');
   }
 
   return patterns.length > 0 ? `\nPATTERN EQUIVALENTS:\n${patterns.join('\n')}` : '';
@@ -352,11 +534,116 @@ function extractTranslationWarnings(sourceLanguage, targetLanguage) {
     'python-typescript': [
       'Python list comprehensions need conversion to .map()/.filter()',
       'Python tuple unpacking requires explicit destructuring'
-    ]
+    ],
+    'typescript-java': [
+      'TypeScript interfaces map to Java interfaces with different semantics',
+      'Arrow functions need conversion to lambdas or method references'
+    ],
+    'java-typescript': [
+      'Java checked exceptions need conversion to TypeScript error handling',
+      'Java generics have different variance rules than TypeScript'
+    ],
+    'typescript-go': [
+      'TypeScript classes need conversion to Go structs with methods',
+      'No exceptions in Go - use error return values'
+    ],
+    'go-typescript': [
+      'Go error handling pattern needs conversion to try/catch',
+      'Go interfaces are implicit - TypeScript interfaces are explicit'
+    ],
+    'typescript-rust': [
+      'TypeScript null/undefined map to Rust Option<T>',
+      'Memory management differs - Rust uses ownership system'
+    ],
+    'rust-typescript': [
+      'Rust Result<T, E> needs conversion to exceptions or nullable types',
+      'Rust lifetime annotations have no TypeScript equivalent'
+    ],
+    'python-java': [
+      'Python duck typing needs explicit Java interfaces',
+      'Python dynamic features require Java reflection or design patterns'
+    ],
+    'java-python': [
+      'Java static typing becomes Python type hints',
+      'Java access modifiers have no Python enforcement'
+    ],
+    'python-go': [
+      'Python exceptions need conversion to Go error values',
+      'Python dynamic typing requires careful Go interface design'
+    ],
+    'go-python': [
+      'Go goroutines map to Python asyncio or threading',
+      'Go channels need conversion to Python queues or async patterns'
+    ],
+    'python-rust': [
+      'Python GC vs Rust ownership - memory management differs significantly',
+      'Python exceptions map to Rust Result/Option types'
+    ],
+    'rust-python': [
+      'Rust ownership system has no Python equivalent',
+      'Rust zero-cost abstractions may not translate to Python performance'
+    ],
+    'java-go': [
+      'Java exceptions need conversion to Go error values',
+      'Java inheritance patterns need Go composition'
+    ],
+    'go-java': [
+      'Go interfaces are structural - Java interfaces are nominal',
+      'Go defer has no direct Java equivalent'
+    ],
+    'java-rust': [
+      'Java GC vs Rust ownership - fundamentally different memory models',
+      'Java null needs conversion to Rust Option<T>'
+    ],
+    'rust-java': [
+      'Rust ownership/borrowing has no Java equivalent',
+      'Rust traits map to Java interfaces with different semantics'
+    ],
+    'go-rust': [
+      'Go GC vs Rust ownership - different memory management',
+      'Go error values map to Rust Result<T, E>'
+    ],
+    'rust-go': [
+      'Rust ownership system has no Go equivalent',
+      'Rust Result/Option need conversion to Go error values and pointers'
+    ],
+    // C++ Pairs
+    'cpp-typescript': ['C++ raw pointers/references need conversion', 'RAII pattern has no direct TS equivalent'],
+    'typescript-cpp': ['Garbage collection -> Manual memory management', 'Interfaces -> Abstract classes'],
+    // C Pairs
+    'c-typescript': ['Manual memory management -> GC', 'Pointers -> References/Values'],
+    'typescript-c': ['Objects/Classes -> Structs + Functions', 'Exceptions -> Error codes'],
+    // Ruby Pairs
+    'ruby-typescript': ['Dynamic typing -> Static typing', 'Blocks -> Arrow functions'],
+    'typescript-ruby': ['Static types lost', 'Interfaces -> Modules/Mixins'],
+    // PHP Pairs
+    'php-typescript': ['Associative arrays -> Maps/Objects', 'PHP traits -> Mixins'],
+    'typescript-php': ['Interfaces -> PHP Interfaces', 'generics are limited in PHP'],
+    // JavaScript Pairs
+    'javascript-typescript': ['Inferring types from JSDoc or usage', 'Missing type safety'],
+    'typescript-javascript': ['Type erasure', 'Decorators behavior might differ']
   };
 
   const key = `${sourceLanguage}-${targetLanguage}`;
-  return warnings[key] || [];
+  if (warnings[key]) return warnings[key];
+
+  // Dynamic fallback for combinations not explicitly listed
+  const dynamicWarnings = [];
+  const staticLangs = ['typescript', 'java', 'go', 'rust', 'cpp', 'c'];
+  const dynamicLangs = ['python', 'ruby', 'php', 'javascript'];
+  const manualMemory = ['cpp', 'c', 'rust'];
+
+  if (staticLangs.includes(sourceLanguage) && dynamicLangs.includes(targetLanguage)) {
+    dynamicWarnings.push('Type safety guarantees lost in translation');
+  } else if (dynamicLangs.includes(sourceLanguage) && staticLangs.includes(targetLanguage)) {
+    dynamicWarnings.push('Missing type information must be inferred');
+  }
+
+  if (manualMemory.includes(targetLanguage) && !manualMemory.includes(sourceLanguage)) {
+    dynamicWarnings.push('Requires manual memory management implementation');
+  }
+
+  return dynamicWarnings;
 }
 
 
