@@ -934,7 +934,7 @@ function getRunCommand(language, filename) {
     'java': `cd /tmp && cp /usercode/${filename} . && javac ${filename} && java ${filename.replace('.java', '')}`,
     'go': `GOCACHE=/tmp/go-cache GOTMPDIR=/tmp go run /usercode/${filename}`,
     'cpp': `g++ /usercode/${filename} -o /tmp/program && /tmp/program`,
-    'c': `gcc /usercode/${filename} -o /tmp/program && /tmp/program`,
+    'c': `gcc /usercode/${filename} -o /tmp/program -lm && /tmp/program`,
     'ruby': `ruby /usercode/${filename}`,
     'php': `php /usercode/${filename}`,
   };

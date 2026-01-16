@@ -4,6 +4,7 @@ import { CodeContextViewer } from "@/components/CodeContextViewer";
 import { CodeReviewViewer } from "@/components/CodeReviewer";
 import { TranslationViewer } from "@/components/TranslationViewer";
 import { useCodeContext } from "@/lib/analyzer/context-detector";
+import { getMDNDoc } from "@/lib/mdn-docs";
 import { useTranslation } from "@/lib/translation/use-translation";
 import { Editor } from "@monaco-editor/react";
 import { ArrowRightLeft, Brain, Loader2, Play, Sparkles } from "lucide-react";
@@ -435,6 +436,42 @@ export default function CodeEditor() {
               value={code}
               onChange={(value) => setCode(value || "")}
               theme="vs-dark"
+              onMount={(editor, monaco) => {
+                const supportedLanguages = [
+                  'javascript', 'typescript', 'python', 'cpp',
+                  'rust', 'go', 'php', 'java'
+                ];
+
+                supportedLanguages.forEach(lang => {
+                  monaco.languages.registerHoverProvider(lang, {
+                    provideHover: (model: any, position: any) => {
+                      const word = model.getWordAtPosition(position);
+                      if (!word) return null;
+
+                      const wordText = word.word;
+                      const currentLang = model.getLanguageId();
+
+                      const doc = getMDNDoc(wordText, currentLang);
+
+                      if (!doc) return null;
+
+                      return {
+                        range: new monaco.Range(
+                          position.lineNumber,
+                          word.startColumn,
+                          position.lineNumber,
+                          word.endColumn
+                        ),
+                        contents: [
+                          { value: `**${wordText}**` },
+                          { value: doc.description },
+                          { value: `[MDN Reference ↗](${doc.mdn})` }
+                        ]
+                      };
+                    }
+                  });
+                });
+              }}
               options={{
                 minimap: { enabled: false },
                 fontSize: 14,
