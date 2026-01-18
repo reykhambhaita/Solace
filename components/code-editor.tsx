@@ -2,14 +2,16 @@
 
 import { CodeContextViewer } from "@/components/CodeContextViewer";
 import { CodeReviewViewer } from "@/components/CodeReviewer";
+import ResourceFetcher from "@/components/ResourceFetcher";
 import { TranslationViewer } from "@/components/TranslationViewer";
 import { useCodeContext } from "@/lib/analyzer/context-detector";
 import { LANGUAGE_CONFIG } from "@/lib/language-config";
 import { getMDNDoc } from "@/lib/mdn-docs";
 import { useTranslation } from "@/lib/translation/use-translation";
 import { Editor } from "@monaco-editor/react";
-import { ArrowRightLeft, Brain, Loader2, Play, Sparkles } from "lucide-react";
+import { ArrowRightLeft, BookOpen, Brain, Loader2, Play, Sparkles } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3001';
 
 export default function CodeEditor() {
@@ -17,7 +19,7 @@ export default function CodeEditor() {
   const [output, setOutput] = useState("");
   const [language, setLanguage] = useState("javascript");
   const [editorWidth, setEditorWidth] = useState(40);
-  const [activeTab, setActiveTab] = useState<"output" | "context" | "review" | "translate">("output");
+  const [activeTab, setActiveTab] = useState<"output" | "context" | "review" | "translate" | "resources">("output");
   const [isDragging, setIsDragging] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
   const [isReviewing, setIsReviewing] = useState(false);
@@ -391,6 +393,8 @@ export default function CodeEditor() {
 
 
 
+
+
           <button
             onClick={handleTranslate}
             disabled={isTranslating || isAnalyzing || !codeContext || language === targetLanguage}
@@ -417,6 +421,20 @@ export default function CodeEditor() {
               <div className="animate-spin rounded-full h-3 w-3 border-b border-purple-500" />
             )}
           </button>
+
+
+
+          <button
+            onClick={() => setActiveTab("resources")}
+            className={`flex items-center gap-2 px-6 py-3 text-sm font-medium transition-colors border-b-2 ${activeTab === "resources"
+              ? "border-emerald-500 text-white bg-zinc-900/50"
+              : "border-transparent text-zinc-400 hover:text-white hover:bg-zinc-900/30"
+              }`}
+          >
+            <BookOpen className="h-4 w-4" />
+            Resources
+          </button>
+
         </div>
       </div>
 
@@ -652,6 +670,11 @@ export default function CodeEditor() {
                 metadata={translationResult?.metadata}
                 isLoading={isTranslating}
                 error={translationError}
+              />
+            ) : activeTab === "resources" ? (
+              <ResourceFetcher
+                codeContext={codeContext}
+                isAnalyzing={isAnalyzing}
               />
             ) : (
               <CodeReviewViewer

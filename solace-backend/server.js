@@ -1,4 +1,5 @@
 require('dotenv').config();
+const resourcesRouter = require('./routes/resources');
 
 const express = require('express');
 const cors = require('cors');
@@ -27,6 +28,9 @@ app.use((req, res, next) => {
   console.log(`${new Date().toISOString()} - ${req.method} ${req.path}`);
   next();
 });
+
+// Resources API
+app.use('/api', resourcesRouter);
 
 // Health check endpoint
 app.get('/health', (req, res) => {
