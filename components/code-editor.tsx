@@ -4,6 +4,7 @@ import { CodeContextViewer } from "@/components/CodeContextViewer";
 import { CodeReviewViewer } from "@/components/CodeReviewer";
 import { TranslationViewer } from "@/components/TranslationViewer";
 import { useCodeContext } from "@/lib/analyzer/context-detector";
+import { LANGUAGE_CONFIG } from "@/lib/language-config";
 import { getMDNDoc } from "@/lib/mdn-docs";
 import { useTranslation } from "@/lib/translation/use-translation";
 import { Editor } from "@monaco-editor/react";
@@ -16,7 +17,8 @@ export default function CodeEditor() {
   const [output, setOutput] = useState("");
   const [language, setLanguage] = useState("javascript");
   const [editorWidth, setEditorWidth] = useState(40);
-  const [activeTab, setActiveTab] = useState<"output" | "context" | "review" | "translate">("output"); const [isDragging, setIsDragging] = useState(false);
+  const [activeTab, setActiveTab] = useState<"output" | "context" | "review" | "translate">("output");
+  const [isDragging, setIsDragging] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
   const [isReviewing, setIsReviewing] = useState(false);
   const [reviewResult, setReviewResult] = useState<any>(null);
@@ -402,7 +404,6 @@ export default function CodeEditor() {
             {isTranslating ? 'Translating...' : 'Translate'}
           </button>
 
-// Add the translation tab button (in the tab headers section):
           <button
             onClick={() => setActiveTab("translate")}
             className={`flex items-center gap-2 px-6 py-3 text-sm font-medium transition-colors border-b-2 ${activeTab === "translate"
@@ -443,6 +444,7 @@ export default function CodeEditor() {
                 ];
 
                 supportedLanguages.forEach(lang => {
+                  // Register Hover Provider
                   monaco.languages.registerHoverProvider(lang, {
                     provideHover: (model: any, position: any) => {
                       const word = model.getWordAtPosition(position);
@@ -470,6 +472,66 @@ export default function CodeEditor() {
                       };
                     }
                   });
+
+                  // Register Completion Provider
+                  if (lang in LANGUAGE_CONFIG) {
+                    const config = LANGUAGE_CONFIG[lang];
+                    monaco.languages.registerCompletionItemProvider(lang, {
+                      provideCompletionItems: (model: any, position: any) => {
+                        const word = model.getWordUntilPosition(position);
+                        const range = {
+                          startLineNumber: position.lineNumber,
+                          endLineNumber: position.lineNumber,
+                          startColumn: word.startColumn,
+                          endColumn: word.endColumn
+                        };
+
+                        const suggestions: any[] = [];
+
+                        // Keywords
+                        config.keywords.forEach(keyword => {
+                          const doc = getMDNDoc(keyword, lang);
+                          suggestions.push({
+                            label: keyword,
+                            kind: monaco.languages.CompletionItemKind.Keyword,
+                            insertText: keyword,
+                            documentation: doc ? {
+                              value: `${doc.description}\n\n[MDN Reference](${doc.mdn})`
+                            } : "Keyword",
+                            range: range
+                          });
+                        });
+
+                        // Built-ins
+                        config.builtins.forEach(builtin => {
+                          const doc = getMDNDoc(builtin, lang);
+                          suggestions.push({
+                            label: builtin,
+                            kind: monaco.languages.CompletionItemKind.Function,
+                            insertText: builtin,
+                            documentation: doc ? {
+                              value: `${doc.description}\n\n[MDN Reference](${doc.mdn})`
+                            } : "Built-in",
+                            range: range
+                          });
+                        });
+
+                        // Snippets
+                        config.snippets.forEach(snippet => {
+                          suggestions.push({
+                            label: snippet.label,
+                            kind: monaco.languages.CompletionItemKind.Snippet,
+                            insertText: snippet.insertText,
+                            insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+                            documentation: snippet.documentation,
+                            range: range
+                          });
+                        });
+
+                        return { suggestions };
+                      }
+                    });
+                  }
                 });
               }}
               options={{

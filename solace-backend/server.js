@@ -996,7 +996,7 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log('  GET  /health');
   console.log('  POST /api/execute');
   console.log('  POST /api/review');
-  console.log('  POST /api/translate');  // NEW
+  console.log('  POST /api/translate');
   console.log('=================================');
   if (!GROQ_API_KEY) {
     console.warn('⚠️  Warning: Set GROQ_API_KEY environment variable to enable code review');
