@@ -11,14 +11,35 @@ export type CodeType =
   | 'unknown';
 
 export interface CodeTypeResult {
+  // Primary type
   type: CodeType;
   confidence: number;
   indicators: string[];
+
+  // NEW: Secondary type if significant
+  secondary?: {
+    type: CodeType;
+    confidence: number;
+  };
+
   entryPoints?: string[];
   exports?: string[];
   executionIntent?: ExecutionIntent;
+
+  // NEW: More detailed test classification
+  testType?: 'unit' | 'integration' | 'e2e' | 'unknown';
+
+  // NEW: Execution context
+  executionContext?: ExecutionContext;
 }
 
+export interface ExecutionContext {
+  canRunStandalone: boolean;
+  requiresRuntime: string[]; // e.g., ['node', 'browser', 'deno']
+  environmentDependencies: string[]; // env vars, etc.
+  buildRequired: boolean;
+  runnabilityScore: number; // 0-1
+}
 export interface ExecutionIntent {
   isRunnable: boolean;
   confidence: number;
@@ -148,6 +169,58 @@ function detectTest(
   return { isTest: score > 40, confidence, indicators };
 }
 
+function detectTestType(cst: CSTNode, language: SupportedLanguage): 'unit' | 'integration' | 'e2e' | 'unknown' {
+  const codeText = cst.text.toLowerCase();
+
+  // E2E test indicators
+  const e2eIndicators = [
+    'browser', 'puppeteer', 'playwright', 'selenium', 'cypress',
+    'page.goto', 'page.click', 'browser.newpage',
+    'webdriver', 'chromedriver'
+  ];
+
+  if (e2eIndicators.some(ind => codeText.includes(ind))) {
+    return 'e2e';
+  }
+
+  // Integration test indicators
+  const integrationIndicators = [
+    'database', 'api', 'http', 'request', 'fetch',
+    'integration', 'db.connect', 'client.',
+    'testcontainers', 'docker'
+  ];
+
+  // Count integration indicators
+  const integrationCount = integrationIndicators.filter(ind => codeText.includes(ind)).length;
+
+  // Unit test indicators (mock/stub usage)
+  const unitIndicators = [
+    'mock', 'stub', 'spy', 'jest.fn', 'sinon',
+    'unittest.mock', '@patch', 'mockito'
+  ];
+
+  const unitCount = unitIndicators.filter(ind => codeText.includes(ind)).length;
+
+  // Integration tests use real dependencies
+  if (integrationCount >= 2 && unitCount === 0) {
+    return 'integration';
+  }
+
+  // Unit tests mock dependencies
+  if (unitCount >= 1) {
+    return 'unit';
+  }
+
+  // If neither, check for isolated function tests
+  const hasSimpleAssertions = (codeText.match(/assert|expect/g) || []).length;
+  const hasComplexSetup = codeText.includes('beforeall') || codeText.includes('setupclass');
+
+  if (hasSimpleAssertions > 0 && !hasComplexSetup) {
+    return 'unit';
+  }
+
+  return 'unknown';
+}
 
 
 export function detectExecutionIntent(
@@ -184,6 +257,12 @@ export function detectExecutionIntent(
     blockers.push('library structure');
   }
 
+  // Configuration files are not runnable as scripts
+  if (codeType === 'configuration') {
+    score -= 40;
+    blockers.push('configuration file');
+  }
+
   // Heavy exports without entry point
   const exportCount = (codeText.match(/\bexport\b/g) || []).length;
   if (exportCount > 3 && entryPoints.length === 0) {
@@ -206,6 +285,12 @@ export function detectExecutionIntent(
     indicators.push(`${codeType} structure`);
   }
 
+  // Test files can be run via test runners
+  if (codeType === 'test') {
+    score += 15;
+    indicators.push('executable via test runner');
+  }
+
   const confidence = Math.max(0, Math.min(1, (score + 50) / 100));
 
   let entryPointType: ExecutionIntent['entryPointType'] = 'none';
@@ -221,8 +306,129 @@ export function detectExecutionIntent(
     blockers,
   };
 }
+function handleMixedTypes(results: Array<{ type: CodeType, confidence: number }>): CodeType {
+  // Common mixed patterns
 
+  // Test fixtures (test + library)
+  const hasTest = results.some(r => r.type === 'test' && r.confidence > 0.4);
+  const hasLibrary = results.some(r => r.type === 'library' && r.confidence > 0.4);
 
+  if (hasTest && hasLibrary) {
+    // If test confidence is higher, it's a test file with helpers
+    const testConf = results.find(r => r.type === 'test')!.confidence;
+    const libConf = results.find(r => r.type === 'library')!.confidence;
+
+    return testConf > libConf ? 'test' : 'library';
+  }
+
+  // CLI tools (script + library)
+  const hasScript = results.some(r => r.type === 'script' && r.confidence > 0.4);
+
+  if (hasScript && hasLibrary) {
+    // CLI tools are scripts with library exports
+    return 'script';
+  }
+
+  // Build scripts (script + configuration)
+  const hasConfig = results.some(r => r.type === 'configuration' && r.confidence > 0.4);
+
+  if (hasScript && hasConfig) {
+    return 'script'; // Executable configuration
+  }
+
+  // Default: return highest confidence
+  return results[0].type;
+}
+
+function analyzeExecutionContext(
+  cst: CSTNode,
+  language: SupportedLanguage,
+  entryPoints: string[],
+  libraries: LibraryAnalysisResult
+): ExecutionContext {
+  const codeText = cst.text.toLowerCase();
+  const requiresRuntime: string[] = [];
+  const environmentDependencies: string[] = [];
+  let buildRequired = false;
+
+  // Detect runtime requirements
+  if (language === 'typescript') {
+    // Browser APIs
+    if (codeText.includes('window') || codeText.includes('document') ||
+      codeText.includes('localstorage')) {
+      requiresRuntime.push('browser');
+    }
+
+    // Node.js APIs
+    if (codeText.includes('process.') || codeText.includes('__dirname') ||
+      libraries.libraries.some(l => l.name === 'fs' || l.name === 'path')) {
+      requiresRuntime.push('node');
+    }
+
+    // Deno
+    if (codeText.includes('deno.')) {
+      requiresRuntime.push('deno');
+    }
+
+    // TypeScript needs build step
+    buildRequired = true;
+  }
+
+  if (language === 'python') {
+    // Python 3 runtime
+    requiresRuntime.push('python3');
+
+    // Virtual environment check
+    if (libraries.libraries.some(l => !l.isStandardLib)) {
+      environmentDependencies.push('virtual environment with dependencies');
+    }
+  }
+
+  if (language === 'go') {
+    requiresRuntime.push('go');
+    buildRequired = codeText.includes('package main');
+  }
+
+  if (language === 'rust') {
+    requiresRuntime.push('rustc/cargo');
+    buildRequired = true;
+  }
+
+  if (language === 'java') {
+    requiresRuntime.push('jvm');
+    buildRequired = true;
+  }
+
+  // Detect environment dependencies
+  if (codeText.includes('process.env') || codeText.includes('os.getenv') ||
+    codeText.includes('os.environ')) {
+    environmentDependencies.push('environment variables');
+  }
+
+  // Config files
+  if (codeText.includes('config') || codeText.includes('.env')) {
+    environmentDependencies.push('configuration files');
+  }
+
+  // Calculate standalone runnability
+  const canRunStandalone = entryPoints.length > 0 &&
+    requiresRuntime.length > 0 &&
+    !environmentDependencies.includes('configuration files');
+
+  // Score: higher if fewer dependencies
+  let score = 0.5;
+  if (canRunStandalone) score += 0.3;
+  if (environmentDependencies.length === 0) score += 0.1;
+  if (!buildRequired) score += 0.1;
+
+  return {
+    canRunStandalone,
+    requiresRuntime,
+    environmentDependencies,
+    buildRequired,
+    runnabilityScore: Math.min(1, score)
+  };
+}
 
 /**
  * Detect entry points in code
@@ -453,10 +659,13 @@ export function detectCodeType(
   // Detect test
   const testResult = detectTest(cst, language, libraries);
   if (testResult.isTest && testResult.confidence > 0.6) {
+    const testType = detectTestType(cst, language);
+
     return {
       type: 'test',
       confidence: testResult.confidence,
       indicators: testResult.indicators,
+      testType,
     };
   }
 
@@ -464,34 +673,102 @@ export function detectCodeType(
   const entryPoints = detectEntryPoints(cst, language);
   const { count: exportCount, exports } = countExports(cst, language);
 
-  // Detect script
+  // Detect all types with scores
   const scriptResult = detectScript(entryPoints, exportCount, cst);
-
-  // Detect library
   const libraryResult = detectLibrary(entryPoints, exportCount, cst);
-
-  // Detect application
   const applicationResult = detectApplication(entryPoints, exportCount, libraries, cst);
+  const configResult = detectConfiguration(cst, language);
 
-
-
-
-  // Choose the most confident type
+  // Collect all results
   const results = [
     { type: 'script' as CodeType, ...scriptResult },
     { type: 'library' as CodeType, ...libraryResult },
     { type: 'application' as CodeType, ...applicationResult },
+    { type: 'configuration' as CodeType, ...configResult },
   ].sort((a, b) => b.confidence - a.confidence);
 
   const best = results[0];
+  const secondBest = results[1];
+
+  // Determine if there's a significant secondary type
+  let secondary: CodeTypeResult['secondary'] | undefined;
+  if (secondBest.confidence >= 0.4 && secondBest.confidence >= best.confidence * 0.6) {
+    secondary = {
+      type: secondBest.type,
+      confidence: secondBest.confidence
+    };
+  }
+
+  // Execution analysis
   const executionIntent = detectExecutionIntent(cst, language, best.type, entryPoints);
+  const executionContext = analyzeExecutionContext(cst, language, entryPoints, libraries);
 
   return {
     type: best.confidence > 0.5 ? best.type : 'unknown',
     confidence: best.confidence,
     indicators: best.indicators.slice(0, 3),
+    secondary,
     entryPoints: entryPoints.length > 0 ? entryPoints : undefined,
     exports: exports.length > 0 ? exports : undefined,
-    executionIntent, // NEW
+    executionIntent,
+    executionContext,
+  };
+}
+function detectConfiguration(
+  cst: CSTNode,
+  language: SupportedLanguage
+): { isConfiguration: boolean; confidence: number; indicators: string[] } {
+  const indicators: string[] = [];
+  let score = 0;
+  const codeText = cst.text.toLowerCase();
+
+  // Configuration keywords
+  const configKeywords = [
+    'config', 'settings', 'options', 'preferences',
+    'webpack', 'vite', 'rollup', 'babel', 'tsconfig',
+    'eslint', 'prettier', 'jest.config'
+  ];
+
+  for (const keyword of configKeywords) {
+    if (codeText.includes(keyword)) {
+      score += 20;
+      indicators.push(`contains '${keyword}'`);
+      break; // Only count once
+    }
+  }
+
+  // Export patterns (config files usually export config objects)
+  if (codeText.includes('export default {') || codeText.includes('module.exports = {')) {
+    score += 15;
+    indicators.push('exports configuration object');
+  }
+
+  // Large object literals
+  const objectLiteralCount = (codeText.match(/\{[^}]{50,}\}/g) || []).length;
+  if (objectLiteralCount >= 2) {
+    score += 10;
+    indicators.push('contains configuration objects');
+  }
+
+  // Few functions (config files are mostly data)
+  const functionCount = (codeText.match(/function|=>|\bdef\b/g) || []).length;
+  if (functionCount <= 2) {
+    score += 10;
+    indicators.push('minimal logic');
+  }
+
+  // TypeScript/JavaScript config file patterns
+  if (language === 'typescript') {
+    if (codeText.includes('defineconfig') || codeText.includes('configure')) {
+      score += 15;
+      indicators.push('configuration helper function');
+    }
+  }
+
+  const confidence = Math.min(score / 100, 1.0);
+  return {
+    isConfiguration: score > 40,
+    confidence,
+    indicators: indicators.slice(0, 3)
   };
 }

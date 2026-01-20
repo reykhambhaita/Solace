@@ -171,24 +171,34 @@ export function CodeContextViewer({ context, isAnalyzing, error }: CodeContextVi
                   </div>
                 )}
 
-                {/* Determinism Reasoning */}
-                {context.libraries.externalInteractions.determinismReasoning && (
-                  <div className="space-y-2 pt-2 border-t border-zinc-800">
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs text-zinc-500">Determinism:</span>
-                      <Badge variant={context.libraries.externalInteractions.isDeterministic ? 'default' : 'destructive'}>
+                {/* Side Effects & Determinism */}
+                <div className="space-y-2 pt-2 border-t border-zinc-800">
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="p-2 rounded bg-zinc-800/30">
+                      <div className="text-xs text-zinc-500">Determinism</div>
+                      <div className={`text-sm font-medium ${context.libraries.externalInteractions.isDeterministic ? 'text-green-400' : 'text-yellow-400'}`}>
                         {context.libraries.externalInteractions.isDeterministic ? 'Deterministic' : 'Non-deterministic'}
-                      </Badge>
+                      </div>
                     </div>
+                    <div className="p-2 rounded bg-zinc-800/30">
+                      <div className="text-xs text-zinc-500">Side Effects</div>
+                      <div className={`text-sm font-medium ${context.reviewIR?.behavior.sideEffects.hasSideEffects ? 'text-yellow-400' : 'text-green-400'}`}>
+                        {context.reviewIR?.behavior.sideEffects.purity === 'pure' ? 'Pure' : 'Impure'}
+                      </div>
+                    </div>
+                  </div>
+
+                  {context.reviewIR?.behavior.sideEffects.details.length > 0 && (
                     <div className="space-y-1">
-                      {context.libraries.externalInteractions.determinismReasoning.reasoning.map((reason, idx) => (
+                      <span className="text-xs text-zinc-500">Side Effect Details:</span>
+                      {context.reviewIR.behavior.sideEffects.details.map((detail, idx) => (
                         <div key={idx} className="text-xs text-zinc-400 pl-2 border-l-2 border-zinc-700">
-                          {reason}
+                          {detail}
                         </div>
                       ))}
                     </div>
-                  </div>
-                )}
+                  )}
+                </div>
 
                 {/* Testability */}
                 {context.reviewIR && (
@@ -431,6 +441,42 @@ export function CodeContextViewer({ context, isAnalyzing, error }: CodeContextVi
                   </div>
                 </div>
 
+                {/* Paradigm Fitness & Mixing */}
+                <div className="grid grid-cols-2 gap-2 pt-2 border-t border-zinc-800">
+                  {context.paradigm.fitnessScore !== undefined && (
+                    <div className="p-2 rounded bg-zinc-800/30">
+                      <div className="text-xs text-zinc-500">Language Fit</div>
+                      <div className={`text-lg font-semibold ${context.paradigm.fitnessScore > 0.8 ? 'text-green-400' : context.paradigm.fitnessScore > 0.6 ? 'text-yellow-400' : 'text-red-400'}`}>
+                        {Math.round(context.paradigm.fitnessScore * 100)}%
+                      </div>
+                    </div>
+                  )}
+                  {context.paradigm.mixing && (
+                    <div className="p-2 rounded bg-zinc-800/30">
+                      <div className="text-xs text-zinc-500">Mixing</div>
+                      <div className="text-sm font-medium text-yellow-400">
+                        {context.paradigm.mixing.score > 0 ? 'Mixed' : 'Pure'}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {context.paradigm.mixing && context.paradigm.mixing.patterns.length > 0 && (
+                  <div className="space-y-2 pt-2 border-t border-zinc-800">
+                    <span className="text-xs text-zinc-500">Mixing Patterns:</span>
+                    {context.paradigm.mixing.patterns.map((p, idx) => (
+                      <div key={idx} className="text-xs bg-zinc-800/50 p-2 rounded border border-zinc-700">
+                        <div className="flex justify-between mb-1">
+                          <span className="text-zinc-300">{p.paradigmA} + {p.paradigmB}</span>
+                          <span className={`px-1.5 rounded text-[10px] ${p.severity === 'high' ? 'bg-red-500/20 text-red-300' : 'bg-blue-500/20 text-blue-300'}`}>
+                            {p.reason}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
                 {/* Secondary Paradigm */}
                 {context.paradigm.secondary && (
                   <div className="space-y-2 pt-2 border-t border-zinc-800">
@@ -599,6 +645,37 @@ export function CodeContextViewer({ context, isAnalyzing, error }: CodeContextVi
                         </Badge>
                       ))}
                     </div>
+                  </div>
+                )}
+
+                {/* Test Specifics */}
+                {context.codeType.type === 'test' && context.codeType.testType && (
+                  <div className="space-y-1 pt-2 border-t border-zinc-800">
+                    <span className="text-xs text-zinc-500">Test Classification:</span>
+                    <Badge variant="outline" className="ml-2 text-xs border-blue-500/30 text-blue-400">
+                      {context.codeType.testType.toUpperCase()}
+                    </Badge>
+                  </div>
+                )}
+
+                {/* Execution Context */}
+                {context.codeType.executionContext && (
+                  <div className="space-y-2 pt-2 border-t border-zinc-800">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-zinc-500">Runnability:</span>
+                      <span className={`text-xs font-mono px-1.5 rounded ${context.codeType.executionContext.runnabilityScore > 0.7 ? 'bg-green-500/10 text-green-400' : 'bg-zinc-800 text-zinc-400'}`}>
+                        {Math.round(context.codeType.executionContext.runnabilityScore * 100)}%
+                      </span>
+                    </div>
+                    {context.codeType.executionContext.requiresRuntime.length > 0 && (
+                      <div className="flex flex-wrap gap-1">
+                        {context.codeType.executionContext.requiresRuntime.map((rt, idx) => (
+                          <Badge key={idx} variant="secondary" className="text-[10px] bg-zinc-800 text-zinc-400">
+                            {rt}
+                          </Badge>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>

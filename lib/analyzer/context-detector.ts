@@ -1,19 +1,20 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   analyzeControlFlowComplexity,
-  analyzeSideEffectCertainty,
+  analyzeSideEffects,
   calculateTestability,
   detectMagicValues,
   detectSilentBehaviors,
   extractDecisionRules,
   mapToDomainTokens,
   type CSTNode,
+  type SideEffectAnalysis
 } from '../analyzer/semantic-ir';
 import { useTreeSitter } from '../tree-sitter/use-tree-sitter';
-import { detectCodeType, type CodeTypeResult } from './code-type-detector';
-import { detectLanguage, type LanguageDetectionResult } from './language-detector';
+import { detectCodeType, type CodeTypeResult, type ExecutionContext } from './code-type-detector';
+import { detectLanguage, SupportedLanguage, type LanguageDetectionResult } from './language-detector';
 import { analyzeLibraries, type LibraryAnalysisResult } from './library-analyzer';
-import { analyzeParadigm, type ParadigmAnalysisResult } from './paradigm-detector';
+import { analyzeParadigm, type ParadigmAnalysisResult, type ParadigmMixing } from './paradigm-detector';
 export interface CodeContext {
   language: LanguageDetectionResult;
   libraries: LibraryAnalysisResult;
@@ -25,7 +26,17 @@ export interface CodeContext {
   reviewIR: ReviewIR; // NEW - stable IR for LLM
 }
 export type LLMRole = 'review-only' | 'refactor' | 'generate' | 'explain';
+export interface AnalysisOptions {
+  // Control what gets analyzed
+  skip?: ('libraries' | 'paradigm' | 'llmContext' | 'reviewIR')[];
 
+  // Control depth
+  maxComplexityAnalysis?: boolean;
+
+  // Caching
+  useCache?: boolean;
+  cacheKey?: string;
+}
 export type CodeIntent =
   | 'data-transformation'
   | 'validation'
@@ -52,6 +63,8 @@ export interface ReviewIR {
   // Core identification
   language: string;
   codeType: string;
+  secondaryCodeType?: string; // NEW
+  testType?: string; // NEW
   intent: {
     primary: string;
     description: string;
@@ -63,6 +76,8 @@ export interface ReviewIR {
     classes: number;
     linesOfCode: number;
     paradigm: string;
+    mixing?: ParadigmMixing; // NEW
+    fitnessScore?: number; // NEW
   };
 
   // Behavior
@@ -70,8 +85,9 @@ export interface ReviewIR {
     executionModel: string;
     isDeterministic: boolean;
     determinismReasons: string[];
-    sideEffects: string;
+    sideEffects: SideEffectAnalysis; // RICH ANALYSIS
     externalInteractions: string[];
+    executionContext?: ExecutionContext; // NEW
   };
 
   // State
@@ -452,14 +468,14 @@ export function toReviewIR(context: CodeContext, cst: CSTNode): ReviewIR {
   const magicValues = detectMagicValues(cst);
   const silentBehaviors = detectSilentBehaviors(cst);
   const controlFlow = analyzeControlFlowComplexity(cst);
-  const sideEffectCertainty = analyzeSideEffectCertainty(
-    cst,
-    context.libraries.externalInteractions.types.filter(t => t !== 'none')
-  );
+
+  // Use new Side Effect Analysis
+  const sideEffects = analyzeSideEffects(cst, 'module');
+
   const testability = calculateTestability(
     cst,
     context.libraries.externalInteractions.isDeterministic,
-    sideEffectCertainty,
+    sideEffects.hasSideEffects ? 'external-likely' : 'none', // approximate mapping for now
     context.libraries.externalInteractions.types.filter(t => t !== 'none')
   );
 
@@ -470,6 +486,8 @@ export function toReviewIR(context: CodeContext, cst: CSTNode): ReviewIR {
 
     language: context.language.language,
     codeType: context.codeType.type,
+    secondaryCodeType: context.codeType.secondary?.type,
+    testType: context.codeType.testType,
     intent: {
       primary: context.llmContext.intent.primary,
       description: context.llmContext.intent.semanticDescription,
@@ -480,14 +498,17 @@ export function toReviewIR(context: CodeContext, cst: CSTNode): ReviewIR {
       classes: context.paradigm.patterns.classes,
       linesOfCode,
       paradigm: context.paradigm.primary.paradigm,
+      mixing: context.paradigm.mixing,
+      fitnessScore: context.paradigm.fitnessScore,
     },
 
     behavior: {
       executionModel: context.paradigm.executionModel.primary,
       isDeterministic: context.libraries.externalInteractions.isDeterministic,
       determinismReasons: context.libraries.externalInteractions.determinismReasoning.reasoning,
-      sideEffects: sideEffectCertainty,
+      sideEffects: sideEffects,
       externalInteractions: context.libraries.externalInteractions.types,
+      executionContext: context.codeType.executionContext,
     },
 
     state: {
@@ -542,9 +563,12 @@ export function toReviewIR(context: CodeContext, cst: CSTNode): ReviewIR {
 /**
  * Analyze code context (non-React version)
  */
+
+
 export function analyzeCodeContext(
   code: string,
-  cst?: CSTNode // CHANGED from ast?: ASTNode
+  cst?: CSTNode,
+  options?: AnalysisOptions  // NEW PARAMETER
 ): CodeContext | null {
   if (!code || code.trim().length === 0) {
     return null;
@@ -552,13 +576,20 @@ export function analyzeCodeContext(
 
   const startTime = performance.now();
 
+  // NEW: Apply options
+  const opts: Required<AnalysisOptions> = {
+    skip: options?.skip || [],
+    maxComplexityAnalysis: options?.maxComplexityAnalysis ?? true,
+    useCache: options?.useCache ?? false,
+    cacheKey: options?.cacheKey || hashCode(code)
+  };
+
   try {
     // Step 1: Detect language
     const language = detectLanguage(code);
 
     if (!cst) {
-      // If no AST provided, we can't do full analysis
-      // Return partial context
+      // Return minimal context (existing code remains)
       return {
         language,
         libraries: {
@@ -637,7 +668,7 @@ export function analyzeCodeContext(
         codeType: {
           type: 'unknown',
           confidence: 0,
-          indicators: ['AST not available'],
+          indicators: ['CST not available'],
         },
         analysisTime: performance.now() - startTime,
         confidence: {
@@ -649,7 +680,7 @@ export function analyzeCodeContext(
             codeType: 0,
             executionModel: 0
           },
-          warnings: ['AST not available'],
+          warnings: ['CST not available'],
           isLLMReady: false
         },
         llmContext: {
@@ -693,7 +724,13 @@ export function analyzeCodeContext(
             executionModel: 'synchronous',
             isDeterministic: true,
             determinismReasons: ['CST not available'],
-            sideEffects: 'none',
+            sideEffects: {
+              hasSideEffects: false,
+              sideEffectTypes: [],
+              purity: 'pure',
+              memoizable: true,
+              details: ['CST not available']
+            },
             externalInteractions: [],
           },
           state: {
@@ -731,18 +768,21 @@ export function analyzeCodeContext(
       };
     }
 
-    // Step 2: Analyze libraries
-    const libraries = analyzeLibraries(cst, language.language);
+    // Step 2: Analyze libraries (skip if requested)
+    const libraries = opts.skip.includes('libraries')
+      ? createEmptyLibraryAnalysis()
+      : analyzeLibraries(cst, language.language);
 
-    // Step 3: Analyze paradigm - now uses CST
-    const paradigm = analyzeParadigm(cst, language.language);
+    // Step 3: Analyze paradigm (skip if requested)
+    const paradigm = opts.skip.includes('paradigm')
+      ? createEmptyParadigmAnalysis()
+      : analyzeParadigm(cst, language.language);
 
-    // Step 4: Detect code type - now uses CST
+    // Step 4: Detect code type
     const codeType = detectCodeType(cst, language.language, libraries);
 
     const analysisTime = performance.now() - startTime;
 
-    // Replace the existing confidence calculation with:
     const baseContext = {
       language,
       libraries,
@@ -751,9 +791,18 @@ export function analyzeCodeContext(
       analysisTime,
     };
 
-    const intent = classifyIntent(cst, codeType, paradigm, libraries);
-    const readiness = calculateLLMReadiness(baseContext);
-    const { role, promptHints, focusAreas } = determineLLMRole(readiness, intent, codeType);
+    // Step 5: Calculate intent and LLM context (skip if requested)
+    const intent = opts.skip.includes('llmContext')
+      ? createEmptyIntent()
+      : classifyIntent(cst, codeType, paradigm, libraries);
+
+    const readiness = opts.skip.includes('llmContext')
+      ? createEmptyReadiness()
+      : calculateLLMReadiness(baseContext);
+
+    const { role, promptHints, focusAreas } = opts.skip.includes('llmContext')
+      ? { role: 'explain' as LLMRole, promptHints: [], focusAreas: [] }
+      : determineLLMRole(readiness, intent, codeType);
 
     const llmContext: LLMContext = {
       role,
@@ -767,11 +816,15 @@ export function analyzeCodeContext(
       ...baseContext,
       confidence: null as any,
       llmContext,
-      reviewIR: null as any, // Will be set after
+      reviewIR: null as any,
     };
 
     result.confidence = calculateContextConfidence(result);
-    result.reviewIR = toReviewIR(result, cst);
+
+    // Skip ReviewIR if requested
+    result.reviewIR = opts.skip.includes('reviewIR')
+      ? createEmptyReviewIR(language.language)
+      : toReviewIR(result, cst);
 
     return result;
   } catch (error) {
@@ -779,6 +832,68 @@ export function analyzeCodeContext(
     return null;
   }
 }
+
+
+function createMinimalContext(code: string, language: SupportedLanguage): CodeContext {
+  return {
+    language: {
+      language,
+      dialect: null,
+      confidence: 0.5,
+      indicators: ['fallback'],
+      detectionMethod: 'fallback'
+    },
+    libraries: createEmptyLibraryAnalysis(),
+    paradigm: createEmptyParadigmAnalysis(),
+    codeType: {
+      type: 'unknown',
+      confidence: 0,
+      indicators: ['minimal analysis']
+    },
+    analysisTime: 0,
+    confidence: {
+      overall: 0.3,
+      breakdown: {
+        language: 0.5,
+        libraries: 0,
+        paradigm: 0,
+        codeType: 0,
+        executionModel: 0
+      },
+      warnings: ['Minimal analysis - limited context'],
+      isLLMReady: false
+    },
+    llmContext: {
+      role: 'explain',
+      readiness: createEmptyReadiness(),
+      intent: createEmptyIntent(),
+      promptHints: ['Limited context available'],
+      focusAreas: []
+    },
+    reviewIR: createEmptyReviewIR(language)
+  };
+}
+function validateCodeContext(context: Partial<CodeContext>): boolean {
+  // Ensure critical fields exist
+  if (!context.language) {
+    console.warn('[CodeContext] Missing language field');
+    return false;
+  }
+  if (!context.paradigm) {
+    console.warn('[CodeContext] Missing paradigm field');
+    return false;
+  }
+  if (!context.codeType) {
+    console.warn('[CodeContext] Missing codeType field');
+    return false;
+  }
+  if (!context.libraries) {
+    console.warn('[CodeContext] Missing libraries field');
+    return false;
+  }
+  return true;
+}
+
 
 
 
@@ -925,4 +1040,149 @@ export function useCodeContext(code: string): {
   }, [analyze]);
 
   return { context, isAnalyzing, error };
+}
+
+function createEmptyLibraryAnalysis(): LibraryAnalysisResult {
+  return {
+    libraries: [],
+    frameworks: [],
+    externalInteractions: {
+      types: [],
+      confidence: 0,
+      indicators: [],
+      isDeterministic: true,
+      nondeterministicSources: [],
+      determinismReasoning: {
+        isDeterministic: true,
+        confidence: 0,
+        reasoning: [],
+        nondeterministicSources: [],
+        classification: {
+          class: 'fully-deterministic',
+          valueStability: 'stable',
+          orderStability: 'stable',
+          hasRaceConditions: false,
+          hasTimeDependency: false,
+          hasRandomness: false,
+          hasExternalState: false,
+          llmGuidance: ''
+        }
+      }
+    },
+    errorHandling: {
+      approach: 'unknown',
+      confidence: 0,
+      indicators: [],
+      hasErrorHandling: false
+    },
+    outputContract: {
+      returnTypes: [],
+      structure: 'unknown',
+      semanticMeaning: '',
+      guarantees: [],
+      uncertainties: []
+    }
+  };
+}
+
+function createEmptyParadigmAnalysis(): ParadigmAnalysisResult {
+  return {
+    primary: { paradigm: 'procedural', score: 0, confidence: 0, indicators: [] },
+    patterns: {
+      classes: 0,
+      functions: 0,
+      pureFunctions: 0,
+      higherOrderFunctions: 0,
+      mutations: 0,
+      loops: 0
+    },
+    details: {
+      classNames: [],
+      functionNames: [],
+      loopTypes: []
+    },
+    executionModel: {
+      primary: 'synchronous',
+      confidence: 0,
+      indicators: [],
+      asyncPatterns: 0,
+      eventPatterns: 0,
+      concurrencyPatterns: 0
+    },
+    state: {
+      lifetime: 'stateless',
+      confidence: 0,
+      globalVars: 0,
+      mutabilityScore: 0,
+      indicators: [],
+      escapingReferences: 0,
+      closureCaptures: 0
+    }
+  };
+}
+
+function createEmptyIntent(): IntentClassification {
+  return {
+    primary: 'unknown',
+    confidence: 0,
+    indicators: [],
+    semanticDescription: ''
+  };
+}
+
+function createEmptyReadiness(): LLMReadinessScore {
+  return {
+    reviewReadiness: 0,
+    refactorReadiness: 0,
+    executionReadiness: 0,
+    breakdown: {
+      structuralClarity: 0,
+      semanticCompleteness: 0,
+      contextSufficiency: 0,
+      riskFactors: 0
+    },
+    blockingIssues: []
+  };
+}
+
+function createEmptyReviewIR(language: string): ReviewIR {
+  return {
+    version: '1.0',
+    language,
+    codeType: 'unknown',
+    intent: { primary: 'unknown', description: '' },
+    structure: { functions: 0, classes: 0, linesOfCode: 0, paradigm: 'procedural' },
+    behavior: {
+      executionModel: 'synchronous',
+      isDeterministic: true,
+      determinismReasons: [],
+      sideEffects: {
+        hasSideEffects: false,
+        sideEffectTypes: [],
+        purity: 'pure',
+        memoizable: true,
+        details: []
+      },
+      externalInteractions: []
+    },
+    state: { lifetime: 'stateless', mutability: 0, globalVariables: 0 },
+    quality: { testability: 0, controlFlowComplexity: 0, errorHandling: 'unknown' },
+    guidance: {
+      role: 'explain',
+      readinessScores: { review: 0, refactor: 0, execution: 0 },
+      focusAreas: [],
+      promptHints: [],
+      warnings: []
+    },
+    elements: {
+      decisionRules: [],
+      magicValues: [],
+      silentBehaviors: []
+    },
+    outputContract: {
+      structure: 'unknown',
+      meaning: '',
+      guarantees: []
+    }
+  };
 }

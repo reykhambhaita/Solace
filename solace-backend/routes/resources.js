@@ -2,71 +2,183 @@
 const express = require('express');
 const router = express.Router();
 
+/**
+ * Build search queries from code context using deep intent analysis
+ */
+async function buildSearchQueries(codeContext, sourceCode = '') {
+  const GROQ_API_KEY = process.env.GROQ_API_KEY;
 
+  if (!GROQ_API_KEY) {
+    console.warn('GROQ API key not configured, falling back to basic queries');
+    return buildFallbackQueries(codeContext);
+  }
+
+  try {
+    // Extract context information
+    const language = codeContext.language.language;
+    const intent = codeContext.llmContext.intent;
+    const paradigm = codeContext.paradigm.primary.paradigm;
+    const patterns = codeContext.paradigm.patterns;
+    const frameworks = codeContext.libraries.frameworks.map(f => f.name).join(', ') || 'None';
+    const topLibraries = codeContext.libraries.libraries
+      .filter(lib => !lib.isStandardLib)
+      .slice(0, 5)
+      .map(lib => lib.name)
+      .join(', ') || 'None';
+    const errorHandling = codeContext.libraries.errorHandling.approach;
+    const executionModel = codeContext.paradigm.executionModel.primary;
+
+    const systemPrompt = `You are an expert code analyst who deeply understands what code actually DOES and WHY developers write it.
+
+Your task: Analyze code context and generate 5-7 HIGHLY SPECIFIC search queries that target the ACTUAL INTENT and REAL-WORLD USE CASE.
+
+CRITICAL RULES:
+1. Understand WHAT the code does, not just its structure
+   - If code uses console.log() → "debugging and logging techniques"
+   - If code uses print() → "debugging output and print formatting"
+   - If code validates input → "input validation patterns and sanitization"
+   - If code parses JSON → "JSON parsing error handling and validation"
+
+2. Focus on SPECIFIC APIs, functions, and techniques being used
+   - Include exact function names (console.log, fetch, map, filter, etc.)
+   - Include specific patterns (async/await, promises, callbacks)
+   - Include actual use cases (debugging, testing, data transformation)
+
+3. Generate queries that find ACTIONABLE resources
+   - Tutorials for the specific technique
+   - Best practices for the actual use case
+   - Common pitfalls and solutions
+   - Real-world examples
+
+4. Be CONCRETE, not abstract
+   ❌ BAD: "TypeScript programming examples"
+   ✅ GOOD: "TypeScript console.log debugging best practices"
+
+   ❌ BAD: "Error handling patterns"
+   ✅ GOOD: "try-catch error handling in async/await functions"
+
+Return ONLY a JSON array:
+[
+  {
+    "query": "highly specific search query targeting actual code intent",
+    "type": "debugging|validation|parsing|transformation|testing|api-usage|pattern",
+    "weight": 0.7-1.0,
+    "reasoning": "brief explanation of why this query is relevant"
+  }
+]`;
+
+    // Truncate source code if too long (keep first 500 chars for analysis)
+    const codeSnippet = sourceCode.length > 500 ? sourceCode.substring(0, 500) + '...' : sourceCode;
+
+    const userPrompt = `Analyze this code context and ACTUAL SOURCE CODE to understand what the developer is doing:
+
+LANGUAGE: ${language}
+PARADIGM: ${paradigm}
+EXECUTION MODEL: ${executionModel}
+
+FRAMEWORKS & LIBRARIES:
+- Frameworks: ${frameworks}
+- Libraries: ${topLibraries}
+
+${codeSnippet ? `ACTUAL CODE:
+\`\`\`${language}
+${codeSnippet}
+\`\`\`
+
+` : ''}TASK: Look at the ${codeSnippet ? 'ACTUAL CODE above' : 'code context'} and generate 5-7 search queries for THIS SPECIFIC CODE.
+
+Ask yourself:
+- What specific APIs/functions ${codeSnippet ? 'do I see in the code' : 'are being used'}? (console.log, fetch, map, etc.)
+- What is this code actually trying to do?
+- What problems might the developer face with these specific APIs?
+- What best practices exist for these exact functions?
+
+Return the JSON array of queries now.`;
+
+    const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${GROQ_API_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'qwen/qwen3-32b',
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt }
+        ],
+        temperature: 0.4, // Slightly higher for more creative, specific queries
+        max_tokens: 1000,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Groq API error: ${response.status}`);
+    }
+
+    const data = await response.json();
+    const content = data.choices[0]?.message?.content || '[]';
+
+    // Extract JSON array from response
+    const jsonMatch = content.match(/\[[\s\S]*\]/);
+    const queries = jsonMatch ? JSON.parse(jsonMatch[0]) : [];
+
+    // Transform to expected format
+    const formattedQueries = queries.map(q => ({
+      primary: q.query,
+      weight: q.weight || 0.8,
+      type: q.type || 'general',
+      reasoning: q.reasoning || ''
+    }));
+
+    console.log(`Generated ${formattedQueries.length} intent-based queries:`);
+    formattedQueries.forEach((q, i) => {
+      console.log(`  ${i + 1}. [${q.type}] ${q.primary}`);
+      if (q.reasoning) console.log(`     → ${q.reasoning}`);
+    });
+
+    return formattedQueries.length > 0 ? formattedQueries : buildFallbackQueries(codeContext);
+
+  } catch (error) {
+    console.error('LLM query generation error:', error);
+    return buildFallbackQueries(codeContext);
+  }
+}
 
 /**
- * Build search queries from code context
+ * Fallback query generation when LLM is unavailable
  */
-function buildSearchQueries(reviewIR, codeContext) {
+function buildFallbackQueries(codeContext) {
   const queries = [];
+  const language = codeContext.language.language;
+  const intent = codeContext.llmContext.intent;
+  const paradigm = codeContext.paradigm.primary.paradigm;
 
-  // Primary query based on intent
-  const intentQuery = `${reviewIR.language} ${reviewIR.intent.primary} ${reviewIR.intent.description}`;
+  // Basic intent query
   queries.push({
-    primary: intentQuery,
+    primary: `${language} ${intent.primary} ${intent.semanticDescription}`,
     weight: 1.0,
     type: 'intent'
   });
 
-  // Paradigm-specific query
-  if (reviewIR.structure.paradigm) {
+  // Paradigm query
+  if (paradigm && paradigm !== 'unknown') {
     queries.push({
-      primary: `${reviewIR.language} ${reviewIR.structure.paradigm} programming examples`,
+      primary: `${language} ${paradigm} programming examples`,
       weight: 0.8,
       type: 'paradigm'
     });
   }
 
-  // Framework-specific queries
+  // Framework query
   if (codeContext.libraries?.frameworks?.length > 0) {
     const framework = codeContext.libraries.frameworks[0].name;
     queries.push({
-      primary: `${framework} ${reviewIR.intent.primary} tutorial`,
+      primary: `${framework} tutorial`,
       weight: 0.9,
       type: 'framework'
     });
   }
-
-  // Complexity-specific query
-  if (reviewIR.quality.controlFlowComplexity > 5) {
-    queries.push({
-      primary: `${reviewIR.language} reduce complexity refactoring`,
-      weight: 0.7,
-      type: 'quality'
-    });
-  }
-
-  // Error handling specific
-  if (reviewIR.quality.errorHandling !== 'unknown') {
-    queries.push({
-      primary: `${reviewIR.language} ${reviewIR.quality.errorHandling} error handling best practices`,
-      weight: 0.7,
-      type: 'error-handling'
-    });
-  }
-
-  // Library-specific queries
-  const topLibraries = codeContext.libraries?.libraries
-    ?.filter(lib => !lib.isStandardLib)
-    ?.slice(0, 2) || [];
-
-  topLibraries.forEach(lib => {
-    queries.push({
-      primary: `${lib.name} ${reviewIR.language} documentation examples`,
-      weight: 0.6,
-      type: 'library'
-    });
-  });
 
   return queries;
 }
@@ -240,7 +352,7 @@ async function fetchYouTube(query) {
 /**
  * Use LLM to rank resources by relevance
  */
-async function rankResourcesWithLLM(resources, reviewIR, queries) {
+async function rankResourcesWithLLM(resources, codeContext, queries) {
   const GROQ_API_KEY = process.env.GROQ_API_KEY;
   if (!GROQ_API_KEY) {
     console.warn('GROQ API key not configured (GROQ_API_KEY missing), using basic scoring');
@@ -248,16 +360,33 @@ async function rankResourcesWithLLM(resources, reviewIR, queries) {
   }
 
   try {
+    // Extract context information
+    const language = codeContext.language.language;
+    const intent = codeContext.llmContext.intent;
+    const paradigm = codeContext.paradigm.primary.paradigm;
+    const patterns = codeContext.paradigm.patterns;
+    const executionModel = codeContext.paradigm.executionModel.primary;
+    const isDeterministic = codeContext.libraries.externalInteractions.isDeterministic;
+    const frameworks = codeContext.libraries.frameworks.map(f => f.name).join(', ') || 'None';
+    const topLibraries = codeContext.libraries.libraries
+      .filter(lib => !lib.isStandardLib)
+      .slice(0, 3)
+      .map(lib => lib.name)
+      .join(', ') || 'None';
+
     const systemPrompt = `You are an expert at evaluating learning resources for programmers.
 Given code context and a list of resources, score each resource's relevance on a scale of 0.0 to 1.0.
 
 Code Context:
-- Language: ${reviewIR.language}
-- Intent: ${reviewIR.intent.description}
-- Paradigm: ${reviewIR.structure.paradigm}
-- Complexity: ${reviewIR.quality.controlFlowComplexity}
-- Functions: ${reviewIR.structure.functions}
-- Deterministic: ${reviewIR.behavior.isDeterministic}
+- Language: ${language}
+- Intent: ${intent.semanticDescription}
+- Paradigm: ${paradigm}
+- Execution Model: ${executionModel}
+- Functions: ${patterns.functions}, Classes: ${patterns.classes}
+- Complexity Indicators: Loops: ${patterns.loops}, Mutations: ${patterns.mutations}
+- Deterministic: ${isDeterministic}
+- Frameworks: ${frameworks}
+- Key Libraries: ${topLibraries}
 
 Search Queries Used:
 ${queries.map(q => `- ${q.primary} (${q.type})`).join('\n')}
@@ -283,7 +412,7 @@ Return ONLY a JSON array of scores in the same order as the resources, no other 
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'llama-3.3-70b-versatile',
+        model: 'qwen/qwen3-32b',
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userPrompt }
@@ -336,25 +465,24 @@ Return ONLY a JSON array of scores in the same order as the resources, no other 
  */
 router.post('/resources', async (req, res) => {
   try {
-    const { reviewIR, codeContext } = req.body;
+    const { codeContext, sourceCode } = req.body;
 
-    if (!reviewIR || !codeContext) {
+    if (!codeContext) {
       return res.status(400).json({
         success: false,
-        error: 'Missing reviewIR or codeContext'
+        error: 'Missing codeContext'
       });
     }
 
-    // Build search queries from code context
-    const queries = buildSearchQueries(reviewIR, codeContext);
+    // Build search queries from code context using LLM
+    const queries = await buildSearchQueries(codeContext, sourceCode || '');
     console.log('Generated queries:', queries.map(q => q.primary));
 
     // Fetch from all sources in parallel
+    const language = codeContext.language.language;
     const allResources = await Promise.all([
       ...queries.slice(0, 3).map(q => fetchGitHub(q.primary)),
-      ...queries.slice(0, 3).map(q => fetchStackOverflow(q.primary)),
-      fetchDocumentation(queries[0].primary, reviewIR.language),
-      fetchYouTube(queries[0].primary)
+      ...queries.slice(0, 3).map(q => fetchStackOverflow(q.primary))
     ]);
 
     // Flatten and deduplicate
@@ -366,7 +494,7 @@ router.post('/resources', async (req, res) => {
     console.log(`Fetched ${uniqueResources.length} unique resources`);
 
     // Rank with LLM
-    const rankedResources = await rankResourcesWithLLM(uniqueResources, reviewIR, queries);
+    const rankedResources = await rankResourcesWithLLM(uniqueResources, codeContext, queries);
 
     // Sort by relevance and take top 20
     const topResources = rankedResources
@@ -374,6 +502,9 @@ router.post('/resources', async (req, res) => {
       .slice(0, 20);
 
     console.log(`Returning ${topResources.length} ranked resources`);
+    topResources.forEach((resource, index) => {
+      console.log(`[Resource ${index + 1}] ${resource.title} - ${resource.url}`);
+    });
 
     res.json({
       success: true,

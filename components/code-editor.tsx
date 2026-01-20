@@ -675,6 +675,7 @@ export default function CodeEditor() {
               <ResourceFetcher
                 codeContext={codeContext}
                 isAnalyzing={isAnalyzing}
+                sourceCode={code}
               />
             ) : (
               <CodeReviewViewer

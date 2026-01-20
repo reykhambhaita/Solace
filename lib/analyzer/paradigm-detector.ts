@@ -50,6 +50,21 @@ export interface StateAnalysis {
   escapingReferences: number; // References that escape local scope
   closureCaptures: number; // Captured variables in closures
 }
+
+export interface ParadigmMixing {
+  isIntentional: boolean;
+  patterns: MixingPattern[];
+  recommendation: 'refactor' | 'accept' | 'document';
+  score: number; // 0-1, higher = more mixed
+}
+
+export interface MixingPattern {
+  paradigmA: string;
+  paradigmB: string;
+  location: { row: number; column: number };
+  reason: 'legacy-code' | 'optimization' | 'framework-required' | 'inconsistent';
+  severity: 'low' | 'medium' | 'high';
+}
 export interface ParadigmAnalysisResult {
   primary: ParadigmScore;
   secondary?: ParadigmScore;
@@ -68,6 +83,10 @@ export interface ParadigmAnalysisResult {
   };
   executionModel: ExecutionModelAnalysis; // NEW
   state: StateAnalysis;
+
+  // NEW FIELDS:
+  mixing?: ParadigmMixing; // Detect paradigm mixing
+  fitnessScore?: number; // How well the paradigm fits the language (0-1)
 }
 
 // Language-specific node type mappings
@@ -138,17 +157,48 @@ const LANGUAGE_PATTERNS: Record<SupportedLanguage, LanguagePattern> = {
 /**
  * FIXED: Extract ACTUAL class name from declaration node
  */
+/**
+ * ENHANCED: Extract class name with multiple fallback strategies
+ */
 function extractClassName(node: CSTNode, language: SupportedLanguage): string | null {
   const patterns = LANGUAGE_PATTERNS[language];
   if (!patterns || !patterns.class.includes(node.type)) {
     return null;
   }
 
-  // Find the identifier child that contains the class name
+  // Strategy 1: Find identifier child
   for (const child of node.children) {
     if (child.type === patterns.identifier || child.type === 'type_identifier') {
       const name = child.text.trim();
-      // Validate: must be a valid identifier (alphanumeric + underscore, starts with letter)
+      if (/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(name) && name.length < 50) {
+        return name;
+      }
+    }
+  }
+
+  // Strategy 2: Pattern matching on text
+  const classPatterns: Record<string, RegExp> = {
+    typescript: /class\s+([A-Z][a-zA-Z0-9_]*)/,
+    python: /class\s+([A-Z][a-zA-Z0-9_]*)/,
+    java: /class\s+([A-Z][a-zA-Z0-9_]*)/,
+    cpp: /class\s+([A-Z][a-zA-Z0-9_]*)/,
+    php: /class\s+([A-Z][a-zA-Z0-9_]*)/,
+    ruby: /class\s+([A-Z][a-zA-Z0-9_]*)/,
+  };
+
+  const pattern = classPatterns[language];
+  if (pattern) {
+    const match = node.text.match(pattern);
+    if (match && match[1]) {
+      return match[1];
+    }
+  }
+
+  // Strategy 3: Check parent context for assignment
+  if (node.parent?.type === 'variable_declarator') {
+    const nameNode = node.parent.children.find(c => c.type === patterns.identifier);
+    if (nameNode) {
+      const name = nameNode.text.trim();
       if (/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(name) && name.length < 50) {
         return name;
       }
@@ -161,18 +211,21 @@ function extractClassName(node: CSTNode, language: SupportedLanguage): string | 
 /**
  * FIXED: Extract ACTUAL function name from declaration node
  */
+/**
+ * ENHANCED: Extract function name with multiple fallback strategies
+ */
 function extractFunctionName(node: CSTNode, language: SupportedLanguage): string | null {
   const patterns = LANGUAGE_PATTERNS[language];
   if (!patterns || !patterns.function.includes(node.type)) {
     return null;
   }
 
-  // Arrow functions and anonymous functions don't have names
-  if (node.type === 'arrow_function' || node.type === 'function_expression') {
-    // Check if it's assigned to a variable
-    const parent = node.parent;
-    if (parent?.type === 'variable_declarator') {
-      for (const child of parent.children) {
+  // Handle anonymous functions (arrow, lambda, etc.)
+  const anonymousTypes = ['arrow_function', 'function_expression', 'lambda'];
+  if (anonymousTypes.includes(node.type)) {
+    // Check if assigned to variable
+    if (node.parent?.type === 'variable_declarator') {
+      for (const child of node.parent.children) {
         if (child.type === patterns.identifier) {
           const name = child.text.trim();
           if (/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(name) && name.length < 50) {
@@ -181,17 +234,50 @@ function extractFunctionName(node: CSTNode, language: SupportedLanguage): string
         }
       }
     }
-    return null; // Anonymous function
+
+    // Check if it's a property assignment (method)
+    if (node.parent?.type === 'pair' || node.parent?.type === 'property_assignment') {
+      const keyNode = node.parent.children.find(c =>
+        c.type === 'property_identifier' || c.type === patterns.identifier
+      );
+      if (keyNode) {
+        const name = keyNode.text.trim();
+        if (/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(name) && name.length < 50) {
+          return name;
+        }
+      }
+    }
+
+    return null; // Truly anonymous
   }
 
-  // Find the identifier child
+  // Strategy 1: Find identifier child
   for (const child of node.children) {
     if (child.type === patterns.identifier || child.type === 'property_identifier') {
       const name = child.text.trim();
-      // Validate: must be a valid identifier
       if (/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(name) && name.length < 50) {
         return name;
       }
+    }
+  }
+
+  // Strategy 2: Pattern matching
+  const functionPatterns: Record<string, RegExp> = {
+    typescript: /(?:function|const|let|var)\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*[=(]/,
+    python: /def\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(/,
+    go: /func\s+(?:\([^)]*\)\s*)?([a-zA-Z_][a-zA-Z0-9_]*)\s*\(/,
+    rust: /fn\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*[<(]/,
+    java: /(?:public|private|protected|static)?\s*\w+\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(/,
+    cpp: /(?:\w+\s+)?([a-zA-Z_][a-zA-Z0-9_]*)\s*\([^)]*\)\s*(?:const)?\s*\{/,
+    php: /function\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(/,
+    ruby: /def\s+([a-zA-Z_][a-zA-Z0-9_?!]*)/,
+  };
+
+  const pattern = functionPatterns[language];
+  if (pattern) {
+    const match = node.text.match(pattern);
+    if (match && match[1]) {
+      return match[1];
     }
   }
 
@@ -651,6 +737,117 @@ function analyzeState(cst: CSTNode, language: SupportedLanguage, counts: Pattern
   };
 }
 /**
+ * Detect if code mixes paradigms and whether it's intentional
+ */
+function detectParadigmMixing(
+  counts: PatternCounts,
+  scores: { oop: number; functional: number; procedural: number },
+  cst: CSTNode
+): ParadigmMixing {
+  const patterns: MixingPattern[] = [];
+  const threshold = 25; // Paradigm scores above this indicate significant presence
+
+  const activeParadigms = Object.entries(scores)
+    .filter(([_, score]) => score > threshold)
+    .map(([paradigm]) => paradigm);
+
+  // If 2+ paradigms are significantly present, it's mixed
+  if (activeParadigms.length < 2) {
+    return {
+      isIntentional: false,
+      patterns: [],
+      recommendation: 'accept',
+      score: 0
+    };
+  }
+
+  const mixingScore = activeParadigms.length / 3; // 0-1 scale
+
+  // Detect specific mixing patterns
+
+  // OOP + Functional mixing (common in modern TypeScript/Scala)
+  if (scores.oop > threshold && scores.functional > threshold) {
+    if (counts.classes > 0 && counts.mapFilterReduce > 0) {
+      patterns.push({
+        paradigmA: 'object-oriented',
+        paradigmB: 'functional',
+        location: { row: 0, column: 0 },
+        reason: 'framework-required', // React, etc.
+        severity: 'low'
+      });
+    }
+  }
+
+  // OOP + Procedural (often legacy code)
+  if (scores.oop > threshold && scores.procedural > threshold) {
+    if (counts.classes > 0 && counts.loops > counts.mapFilterReduce * 2) {
+      patterns.push({
+        paradigmA: 'object-oriented',
+        paradigmB: 'procedural',
+        location: { row: 0, column: 0 },
+        reason: 'legacy-code',
+        severity: 'medium'
+      });
+    }
+  }
+
+  // Functional + Procedural (inconsistent style)
+  if (scores.functional > threshold && scores.procedural > threshold) {
+    if (counts.loops > 0 && counts.mapFilterReduce > 0) {
+      patterns.push({
+        paradigmA: 'functional',
+        paradigmB: 'procedural',
+        location: { row: 0, column: 0 },
+        reason: 'inconsistent',
+        severity: 'high'
+      });
+    }
+  }
+
+  // Determine if mixing is intentional
+  const intentionalReasons = new Set(['framework-required', 'optimization']);
+  const isIntentional = patterns.every(p => intentionalReasons.has(p.reason));
+
+  // Recommendation
+  let recommendation: ParadigmMixing['recommendation'] = 'accept';
+  if (patterns.some(p => p.severity === 'high')) {
+    recommendation = 'refactor';
+  } else if (patterns.some(p => p.severity === 'medium')) {
+    recommendation = 'document';
+  }
+
+  return {
+    isIntentional,
+    patterns,
+    recommendation,
+    score: mixingScore
+  };
+}
+
+/**
+ * Calculate how well a paradigm fits the language
+ */
+function calculateParadigmFitness(
+  paradigm: 'object-oriented' | 'functional' | 'procedural',
+  language: SupportedLanguage
+): number {
+  // Language paradigm affinity (0-1)
+  const affinityMatrix: Record<SupportedLanguage, Record<string, number>> = {
+    typescript: { 'object-oriented': 0.9, 'functional': 0.9, 'procedural': 0.7 },
+    python: { 'object-oriented': 0.9, 'functional': 0.8, 'procedural': 0.9 },
+    go: { 'object-oriented': 0.6, 'functional': 0.6, 'procedural': 1.0 },
+    rust: { 'object-oriented': 0.7, 'functional': 1.0, 'procedural': 0.8 },
+    java: { 'object-oriented': 1.0, 'functional': 0.7, 'procedural': 0.7 },
+    cpp: { 'object-oriented': 1.0, 'functional': 0.6, 'procedural': 0.9 },
+    c: { 'object-oriented': 0.3, 'functional': 0.4, 'procedural': 1.0 },
+    ruby: { 'object-oriented': 1.0, 'functional': 0.8, 'procedural': 0.7 },
+    php: { 'object-oriented': 0.9, 'functional': 0.6, 'procedural': 0.8 },
+  };
+
+  return affinityMatrix[language]?.[paradigm] || 0.5;
+}
+
+/**
  * MAIN EXPORT: Analyze paradigm from CST
  */
 export function analyzeParadigm(
@@ -701,6 +898,12 @@ export function analyzeParadigm(
   const executionModel = analyzeExecutionModel(cst, language);
   const state = analyzeState(cst, language, counts);
 
+  // NEW: Detect paradigm mixing
+  const mixing = detectParadigmMixing(counts, scores, cst);
+
+  // NEW: Calculate fitness score
+  const fitnessScore = calculateParadigmFitness(primary.paradigm as any, language);
+
   return {
     primary,
     secondary,
@@ -719,5 +922,7 @@ export function analyzeParadigm(
     },
     executionModel,
     state,
+    mixing: mixing.patterns.length > 0 ? mixing : undefined,
+    fitnessScore,
   };
 }

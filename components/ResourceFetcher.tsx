@@ -23,11 +23,12 @@ interface Resource {
 interface ResourceFetcherProps {
   codeContext: any;
   isAnalyzing: boolean;
+  sourceCode: string;
 }
 
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3001';
 
-export default function ResourceFetcher({ codeContext, isAnalyzing }: ResourceFetcherProps) {
+export default function ResourceFetcher({ codeContext, isAnalyzing, sourceCode }: ResourceFetcherProps) {
   const [resources, setResources] = useState<Resource[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -50,8 +51,8 @@ export default function ResourceFetcher({ codeContext, isAnalyzing }: ResourceFe
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          reviewIR: codeContext.reviewIR,
           codeContext: codeContext,
+          sourceCode: sourceCode,
         }),
       });
 
@@ -138,8 +139,8 @@ export default function ResourceFetcher({ codeContext, isAnalyzing }: ResourceFe
             <button
               onClick={() => setActiveFilter('all')}
               className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${activeFilter === 'all'
-                  ? 'bg-zinc-700 text-white'
-                  : 'bg-zinc-800/50 text-zinc-400 hover:bg-zinc-800'
+                ? 'bg-zinc-700 text-white'
+                : 'bg-zinc-800/50 text-zinc-400 hover:bg-zinc-800'
                 }`}
             >
               All ({resources.length})
@@ -147,8 +148,8 @@ export default function ResourceFetcher({ codeContext, isAnalyzing }: ResourceFe
             <button
               onClick={() => setActiveFilter('github')}
               className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${activeFilter === 'github'
-                  ? 'bg-purple-600/20 text-purple-400 border border-purple-500/30'
-                  : 'bg-zinc-800/50 text-zinc-400 hover:bg-zinc-800'
+                ? 'bg-purple-600/20 text-purple-400 border border-purple-500/30'
+                : 'bg-zinc-800/50 text-zinc-400 hover:bg-zinc-800'
                 }`}
             >
               <div className="flex items-center gap-1.5">
@@ -159,8 +160,8 @@ export default function ResourceFetcher({ codeContext, isAnalyzing }: ResourceFe
             <button
               onClick={() => setActiveFilter('stackoverflow')}
               className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${activeFilter === 'stackoverflow'
-                  ? 'bg-orange-600/20 text-orange-400 border border-orange-500/30'
-                  : 'bg-zinc-800/50 text-zinc-400 hover:bg-zinc-800'
+                ? 'bg-orange-600/20 text-orange-400 border border-orange-500/30'
+                : 'bg-zinc-800/50 text-zinc-400 hover:bg-zinc-800'
                 }`}
             >
               <div className="flex items-center gap-1.5">
@@ -171,8 +172,8 @@ export default function ResourceFetcher({ codeContext, isAnalyzing }: ResourceFe
             <button
               onClick={() => setActiveFilter('documentation')}
               className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${activeFilter === 'documentation'
-                  ? 'bg-blue-600/20 text-blue-400 border border-blue-500/30'
-                  : 'bg-zinc-800/50 text-zinc-400 hover:bg-zinc-800'
+                ? 'bg-blue-600/20 text-blue-400 border border-blue-500/30'
+                : 'bg-zinc-800/50 text-zinc-400 hover:bg-zinc-800'
                 }`}
             >
               <div className="flex items-center gap-1.5">
@@ -183,8 +184,8 @@ export default function ResourceFetcher({ codeContext, isAnalyzing }: ResourceFe
             <button
               onClick={() => setActiveFilter('video')}
               className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${activeFilter === 'video'
-                  ? 'bg-red-600/20 text-red-400 border border-red-500/30'
-                  : 'bg-zinc-800/50 text-zinc-400 hover:bg-zinc-800'
+                ? 'bg-red-600/20 text-red-400 border border-red-500/30'
+                : 'bg-zinc-800/50 text-zinc-400 hover:bg-zinc-800'
                 }`}
             >
               <div className="flex items-center gap-1.5">

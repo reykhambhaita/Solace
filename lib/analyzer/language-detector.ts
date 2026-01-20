@@ -22,6 +22,23 @@ export interface LanguageDetectionResult {
   detectionMethod?: 'smoking-gun' | 'weighted' | 'fallback';
 }
 
+export const CONFIDENCE_THRESHOLDS = {
+  CERTAIN: 0.9,      // Use smoking gun result
+  CONFIDENT: 0.7,    // Use weighted result
+  UNCERTAIN: 0.5,    // Require user confirmation
+  UNKNOWN: 0.3       // Fallback to default
+} as const;
+
+export interface LanguageAmbiguity {
+  candidates: Array<{
+    language: SupportedLanguage;
+    confidence: number;
+  }>;
+  recommendation: SupportedLanguage;
+  requiresConfirmation: boolean;
+  reason: string;
+}
+
 interface SmokingGunPattern {
   regex: RegExp;
   language: SupportedLanguage;
@@ -169,6 +186,11 @@ const LANGUAGE_PATTERNS: LanguagePattern[] = [
       { regex: /\bgo\s+\w+\(/, penalty: 20, reason: 'Go goroutine' },
     ],
     dialectDetector: (code) => {
+      // Use the new detectDialectVersion function
+      const detectedVersion = detectDialectVersion(code, 'typescript');
+      if (detectedVersion) return detectedVersion;
+
+      // Fallback to existing logic
       if (/as\s+const/m.test(code)) return 'TypeScript 3.4+';
       if (/enum\s+\w+/m.test(code)) return 'TypeScript';
       return 'TypeScript/ES6+';
@@ -369,6 +391,78 @@ const LANGUAGE_PATTERNS: LanguagePattern[] = [
   },
 ];
 
+export const DIALECT_FEATURES: Record<SupportedLanguage, Record<string, string[]>> = {
+  typescript: {
+    'TypeScript 5.0+': ['satisfies operator', 'const type parameters'],
+    'TypeScript 4.x': ['template literal types', 'variadic tuple types'],
+    'TypeScript 3.x': ['const assertions', 'optional chaining'],
+  },
+  python: {
+    'Python 3.12+': ['type parameter syntax', 'f-string debug'],
+    'Python 3.10+': ['match statement', 'union types with |'],
+    'Python 3.9+': ['dict union operator |', 'type hint generics'],
+    'Python 3.8+': ['walrus operator :=', 'positional-only parameters'],
+  },
+  go: {
+    'Go 1.18+': ['generics', 'type parameters'],
+    'Go 1.16+': ['embed package', 'io/fs'],
+  },
+  rust: {
+    'Rust 2021': ['try blocks', 'or patterns in let'],
+    'Rust 2018': ['async/await', 'non-lexical lifetimes'],
+  },
+  java: {
+    'Java 17+': ['sealed classes', 'pattern matching for switch'],
+    'Java 14+': ['records', 'text blocks'],
+    'Java 11+': ['var keyword', 'HTTP client'],
+    'Java 8+': ['lambda expressions', 'streams'],
+  },
+  cpp: {
+    'C++20': ['concepts', 'ranges', 'modules'],
+    'C++17': ['structured bindings', 'if constexpr'],
+    'C++14': ['generic lambdas', 'auto return type'],
+    'C++11': ['auto', 'lambda', 'nullptr'],
+  },
+  c: {
+    'C11': ['_Generic', '_Static_assert'],
+    'C99': ['inline', 'bool type'],
+  },
+  ruby: {
+    'Ruby 3.x': ['rightward assignment', 'endless method'],
+    'Ruby 2.x': ['safe navigation operator'],
+  },
+  php: {
+    'PHP 8.x': ['named arguments', 'match expression', 'union types'],
+    'PHP 7.x': ['scalar type declarations', 'return type declarations'],
+  },
+};
+
+export function detectDialectVersion(
+  code: string,
+  language: SupportedLanguage
+): string | null {
+  const features = DIALECT_FEATURES[language];
+  if (!features) return null;
+
+  const lowerCode = code.toLowerCase();
+
+  // Check from newest to oldest
+  const versions = Object.keys(features).sort().reverse();
+
+  for (const version of versions) {
+    const versionFeatures = features[version];
+    const hasFeature = versionFeatures.some(feature =>
+      lowerCode.includes(feature.toLowerCase())
+    );
+
+    if (hasFeature) {
+      return version;
+    }
+  }
+
+  return null;
+}
+
 /**
  * Calculate adaptive confidence based on code length
  */
@@ -403,6 +497,38 @@ function calculateAdaptiveConfidence(
   const indicatorBonus = Math.min(indicators / 10, 0.15);
 
   return Math.min(baseConfidence + indicatorBonus, 1.0);
+}
+
+/**
+ * Detect ambiguity between similar languages
+ */
+function detectAmbiguity(
+  scores: Map<SupportedLanguage, { score: number; indicators: string[] }>
+): LanguageAmbiguity | null {
+  const sortedScores = Array.from(scores.entries())
+    .map(([lang, data]) => ({ language: lang, confidence: data.score, indicators: data.indicators }))
+    .sort((a, b) => b.confidence - a.confidence);
+
+  if (sortedScores.length < 2) return null;
+
+  const [first, second] = sortedScores;
+
+  // If top 2 scores are within 10% of each other, flag as ambiguous
+  const percentageDiff = Math.abs(first.confidence - second.confidence) / first.confidence;
+
+  if (percentageDiff < 0.1 && first.confidence > 0) {
+    return {
+      candidates: [
+        { language: first.language, confidence: first.confidence },
+        { language: second.language, confidence: second.confidence }
+      ],
+      recommendation: first.language, // Still recommend the higher one
+      requiresConfirmation: true,
+      reason: `Ambiguous: ${first.language} (${(first.confidence * 100).toFixed(0)}%) vs ${second.language} (${(second.confidence * 100).toFixed(0)}%)`
+    };
+  }
+
+  return null;
 }
 
 /**
@@ -492,6 +618,17 @@ export function detectLanguage(code: string): LanguageDetectionResult {
   const positiveIndicators = bestIndicators.filter(i => !i.startsWith('-')).length;
   const confidence = calculateAdaptiveConfidence(bestScore, lineCount, positiveIndicators);
 
+  // Check for ambiguity
+  const ambiguity = detectAmbiguity(scores);
+
+  if (ambiguity && ambiguity.requiresConfirmation) {
+    // Log ambiguity for debugging
+    console.warn('[LanguageDetector]', ambiguity.reason);
+
+    // Add ambiguity info to indicators
+    bestIndicators.unshift(`⚠️ ${ambiguity.reason}`);
+  }
+
   // Detect dialect
   let dialect: string | null = null;
   const matchedPattern = LANGUAGE_PATTERNS.find(p => p.name === bestMatch);
@@ -510,11 +647,21 @@ export function detectLanguage(code: string): LanguageDetectionResult {
     };
   }
 
+  // Apply confidence threshold classification
+  let detectionMethod: LanguageDetectionResult['detectionMethod'] = 'weighted';
+
+  if (confidence >= CONFIDENCE_THRESHOLDS.CERTAIN) {
+    detectionMethod = 'smoking-gun';
+  } else if (confidence < CONFIDENCE_THRESHOLDS.UNCERTAIN) {
+    detectionMethod = 'fallback';
+    console.warn(`[LanguageDetector] Low confidence (${confidence}) for ${bestMatch}`);
+  }
+
   return {
     language: bestMatch,
     dialect,
     confidence: Math.round(confidence * 100) / 100,
     indicators: bestIndicators.filter(i => !i.startsWith('-')).slice(0, 5),
-    detectionMethod: 'weighted',
+    detectionMethod,
   };
 }

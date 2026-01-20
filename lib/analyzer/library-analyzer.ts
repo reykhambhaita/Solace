@@ -17,6 +17,31 @@ export interface ExternalInteractionAnalysis {
   isDeterministic: boolean;
   nondeterministicSources: string[];
 }
+export interface ImportInfo {
+  name: string;
+  path: string;
+  type: 'named' | 'default' | 'namespace' | 'dynamic' | 'side-effect';
+  specifiers: string[]; // What's actually imported
+  location: { row: number; column: number };
+  isTypeOnly?: boolean; // TypeScript type imports
+}
+
+export interface UsageStats {
+  importName: string;
+  usageCount: number;
+  locations: Array<{ row: number; column: number }>;
+  unusedSpecifiers: string[];
+  isUnused: boolean;
+}
+
+export interface LibraryMetadata {
+  name: string;
+  latestVersion?: string;
+  deprecated: boolean;
+  alternatives?: string[];
+  securityAdvisories: number;
+  category: string;
+}
 
 export interface ErrorHandlingStrategy {
   approach: 'exceptions' | 'result-types' | 'panic' | 'silent' | 'mixed' | 'unknown';
@@ -39,9 +64,23 @@ export interface LibraryAnalysisResult {
     indicators: string[];
   }[];
   packageManager?: 'npm' | 'pip' | 'cargo' | 'go-mod' | 'maven' | 'gem' | 'composer';
-  externalInteractions: ExternalInteractionAnalysis & { determinismReasoning: DeterminismReasoning }; // UPDATED
+  externalInteractions: ExternalInteractionAnalysis & { determinismReasoning: DeterminismReasoning };
   errorHandling: ErrorHandlingStrategy;
-  outputContract: OutputContract; // NEW
+  outputContract: OutputContract;
+
+  // NEW FIELDS:
+  importUsage?: Map<string, UsageStats>; // Track which imports are actually used
+  securityIssues?: Array<{
+    library: string;
+    severity: 'critical' | 'high' | 'medium' | 'low';
+    description: string;
+  }>;
+  versionCompatibility?: Array<{
+    library: string;
+    detectedVersion?: string;
+    latestVersion?: string;
+    compatible: boolean;
+  }>;
 }
 export interface DeterminismReasoning {
   isDeterministic: boolean;
@@ -220,19 +259,26 @@ const FRAMEWORK_PATTERNS: Record<string, { imports: string[], indicators: string
  * Extract import information from CST nodes
  * UPDATED: Now uses full, untruncated text from CSTNode
  */
-function extractImports(node: CSTNode, language: SupportedLanguage): string[] {
-  const imports: string[] = [];
+function extractImports(node: CSTNode, language: SupportedLanguage): ImportInfo[] {
+  const imports: ImportInfo[] = [];
 
   function traverse(n: CSTNode) {
     // TypeScript/JavaScript imports
     if (language === 'typescript') {
       if (n.type === 'import_statement') {
-        // Look for string literals in import statements
-        const stringNode = n.children.find(c => c.type === 'string' || c.type === 'string_fragment');
-        if (stringNode) {
-          // Use full text - NO TRUNCATION
-          const importPath = stringNode.text.replace(/['"]/g, '');
-          imports.push(importPath);
+        const importPath = extractImportPath(n);
+        const specifiers = extractImportSpecifiers(n);
+        const isTypeOnly = n.text.toLowerCase().includes('import type');
+
+        if (importPath) {
+          imports.push({
+            name: importPath.split('/').pop() || importPath,
+            path: importPath,
+            type: determineImportType(n),
+            specifiers,
+            location: n.startPosition,
+            isTypeOnly
+          });
         }
       }
     }
@@ -240,13 +286,18 @@ function extractImports(node: CSTNode, language: SupportedLanguage): string[] {
     // Python imports
     if (language === 'python') {
       if (n.type === 'import_statement' || n.type === 'import_from_statement') {
-        // Get module name
         const moduleNode = n.children.find(c =>
-          c.type === 'dotted_name' || c.type === 'identifier' || c.type === 'aliased_import'
+          c.type === 'dotted_name' || c.type === 'identifier'
         );
         if (moduleNode) {
-          // Use full text - NO TRUNCATION
-          imports.push(moduleNode.text.split('.')[0]);
+          const moduleName = moduleNode.text.split('.')[0];
+          imports.push({
+            name: moduleName,
+            path: moduleNode.text,
+            type: n.type === 'import_from_statement' ? 'named' : 'namespace',
+            specifiers: extractPythonSpecifiers(n),
+            location: n.startPosition
+          });
         }
       }
     }
@@ -258,10 +309,15 @@ function extractImports(node: CSTNode, language: SupportedLanguage): string[] {
           if (child.type === 'import_spec') {
             const pathNode = child.children.find(c => c.type === 'interpreted_string_literal');
             if (pathNode) {
-              // Use full text - NO TRUNCATION
               const importPath = pathNode.text.replace(/"/g, '');
               const parts = importPath.split('/');
-              imports.push(parts[parts.length - 1]);
+              imports.push({
+                name: parts[parts.length - 1],
+                path: importPath,
+                type: 'namespace',
+                specifiers: [],
+                location: child.startPosition
+              });
             }
           }
         });
@@ -273,55 +329,14 @@ function extractImports(node: CSTNode, language: SupportedLanguage): string[] {
       if (n.type === 'use_declaration') {
         const pathNode = n.children.find(c => c.type === 'scoped_identifier' || c.type === 'identifier');
         if (pathNode) {
-          // Use full text - NO TRUNCATION
-          imports.push(pathNode.text.split('::')[0]);
-        }
-      }
-    }
-
-    // Java imports
-    if (language === 'java') {
-      if (n.type === 'import_declaration') {
-        const pathNode = n.children.find(c => c.type === 'scoped_identifier' || c.type === 'identifier');
-        if (pathNode) {
-          // Use full text - NO TRUNCATION
-          const parts = pathNode.text.split('.');
-          imports.push(parts.length > 2 ? parts.slice(0, 2).join('.') : parts[0]);
-        }
-      }
-    }
-
-    // C/C++ includes
-    if (language === 'cpp' || language === 'c') {
-      if (n.type === 'preproc_include') {
-        const pathNode = n.children.find(c => c.type === 'system_lib_string' || c.type === 'string_literal');
-        if (pathNode) {
-          // Use full text - NO TRUNCATION
-          const lib = pathNode.text.replace(/[<>"]/g, '');
-          imports.push(lib);
-        }
-      }
-    }
-
-    // Ruby requires
-    if (language === 'ruby') {
-      if (n.type === 'call' && n.text.startsWith('require')) {
-        const stringNode = n.children.find(c => c.type === 'string' || c.type === 'simple_symbol');
-        if (stringNode) {
-          // Use full text - NO TRUNCATION
-          imports.push(stringNode.text.replace(/['"]/g, ''));
-        }
-      }
-    }
-
-    // PHP uses
-    if (language === 'php') {
-      if (n.type === 'namespace_use_declaration') {
-        const nameNode = n.children.find(c => c.type === 'namespace_name' || c.type === 'qualified_name');
-        if (nameNode) {
-          // Use full text - NO TRUNCATION
-          const parts = nameNode.text.split('\\');
-          imports.push(parts[parts.length - 1]);
+          const crateName = pathNode.text.split('::')[0];
+          imports.push({
+            name: crateName,
+            path: pathNode.text,
+            type: 'namespace',
+            specifiers: extractRustSpecifiers(n),
+            location: n.startPosition
+          });
         }
       }
     }
@@ -330,9 +345,158 @@ function extractImports(node: CSTNode, language: SupportedLanguage): string[] {
   }
 
   traverse(node);
-  return [...new Set(imports)]; // Remove duplicates
+  return imports;
 }
 
+
+function extractImportPath(node: CSTNode): string | null {
+  const stringNode = node.children.find(c => c.type === 'string' || c.type === 'string_fragment');
+  if (stringNode) {
+    return stringNode.text.replace(/['"]/g, '');
+  }
+  return null;
+}
+
+function extractImportSpecifiers(node: CSTNode): string[] {
+  const specifiers: string[] = [];
+
+  function findSpecifiers(n: CSTNode) {
+    if (n.type === 'import_specifier' || n.type === 'identifier') {
+      const name = n.text.trim();
+      if (name && name.length > 0 && name !== 'from' && name !== 'import') {
+        specifiers.push(name);
+      }
+    }
+    n.children.forEach(findSpecifiers);
+  }
+
+  findSpecifiers(node);
+  return [...new Set(specifiers)];
+}
+
+function extractPythonSpecifiers(node: CSTNode): string[] {
+  const specifiers: string[] = [];
+
+  function findSpecifiers(n: CSTNode) {
+    if (n.type === 'dotted_name' || n.type === 'identifier') {
+      const name = n.text.trim();
+      if (name && !name.includes('import') && !name.includes('from')) {
+        specifiers.push(name);
+      }
+    }
+    n.children.forEach(findSpecifiers);
+  }
+
+  findSpecifiers(node);
+  return [...new Set(specifiers)];
+}
+
+function extractRustSpecifiers(node: CSTNode): string[] {
+  const specifiers: string[] = [];
+  const text = node.text;
+
+  // Extract from use statements like: use std::{io, fs};
+  const braceMatch = text.match(/\{([^}]+)\}/);
+  if (braceMatch) {
+    specifiers.push(...braceMatch[1].split(',').map(s => s.trim()));
+  } else {
+    // Single import
+    const parts = text.split('::');
+    if (parts.length > 0) {
+      specifiers.push(parts[parts.length - 1].replace(/;/g, '').trim());
+    }
+  }
+
+  return specifiers;
+}
+
+function determineImportType(node: CSTNode): ImportInfo['type'] {
+  const text = node.text.toLowerCase();
+
+  if (text.includes('import(')) return 'dynamic';
+  if (text.includes('* as ')) return 'namespace';
+  if (text.includes('import \'') || text.includes('import "')) {
+    // Check if it's just importing for side effects
+    if (!text.includes('from') && !text.includes('{')) return 'side-effect';
+  }
+  if (text.includes('default')) return 'default';
+
+  return 'named';
+}
+
+function trackImportUsage(
+  imports: ImportInfo[],
+  cst: CSTNode
+): Map<string, UsageStats> {
+  const usageMap = new Map<string, UsageStats>();
+  const codeText = cst.text;
+
+  for (const imp of imports) {
+    const stats: UsageStats = {
+      importName: imp.name,
+      usageCount: 0,
+      locations: [],
+      unusedSpecifiers: [...imp.specifiers],
+      isUnused: true
+    };
+
+    // Count occurrences of import name (excluding the import statement itself)
+    const importLineEnd = imp.location.row + 1;
+    const codeAfterImport = codeText.split('\n').slice(importLineEnd).join('\n');
+
+    // Count direct usage of import name
+    const importNameRegex = new RegExp(`\\b${escapeRegex(imp.name)}\\b`, 'g');
+    let match;
+    while ((match = importNameRegex.exec(codeAfterImport)) !== null) {
+      stats.usageCount++;
+      stats.isUnused = false;
+    }
+
+    // Check specifiers usage
+    stats.unusedSpecifiers = imp.specifiers.filter(spec => {
+      const specRegex = new RegExp(`\\b${escapeRegex(spec)}\\b`, 'g');
+      return !specRegex.test(codeAfterImport);
+    });
+
+    usageMap.set(imp.name, stats);
+  }
+
+  return usageMap;
+}
+
+function escapeRegex(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+function getLibraryMetadata(name: string, language: SupportedLanguage): LibraryMetadata {
+  // This would fetch from APIs in production
+  // For now, return basic info
+
+  const knownDeprecated = new Set([
+    'moment', // Use date-fns or dayjs
+    'request', // Use axios or fetch
+    'gulp', // Use webpack/vite
+  ]);
+
+  return {
+    name,
+    deprecated: knownDeprecated.has(name.toLowerCase()),
+    alternatives: knownDeprecated.has(name.toLowerCase())
+      ? getAlternatives(name)
+      : undefined,
+    securityAdvisories: 0,
+    category: categorizeLibrary(name, language)
+  };
+}
+
+function getAlternatives(name: string): string[] {
+  const alternatives: Record<string, string[]> = {
+    'moment': ['date-fns', 'dayjs', 'luxon'],
+    'request': ['axios', 'node-fetch', 'got'],
+    'gulp': ['webpack', 'vite', 'esbuild'],
+  };
+
+  return alternatives[name.toLowerCase()] || [];
+}
 /**
  * Categorize a library
  */
@@ -757,6 +921,7 @@ function analyzeErrorHandling(
     hasErrorHandling,
   };
 }
+
 /**
  * Analyze libraries from CST
  * UPDATED: Now uses CSTNode instead of ASTNode for lossless analysis
@@ -765,30 +930,49 @@ export function analyzeLibraries(
   cst: CSTNode,
   language: SupportedLanguage
 ): LibraryAnalysisResult {
-  // Extract imports - now with full text access
-  const importNames = extractImports(cst, language);
+  // Extract detailed imports
+  const importInfos = extractImports(cst, language);
 
-  // Create library info
-  const libraries: LibraryInfo[] = importNames.map(name => {
-    const isStandardLib = STANDARD_LIBS[language]?.has(name) || false;
-    const category = categorizeLibrary(name, language);
+  // Track usage
+  const importUsage = trackImportUsage(importInfos, cst);
+
+  // Create library info with metadata
+  const libraries: LibraryInfo[] = importInfos.map((imp: { name: string; path: any; }) => {
+    const isStandardLib = STANDARD_LIBS[language]?.has(imp.name) || false;
+    const category = categorizeLibrary(imp.name, language);
 
     return {
-      name,
+      name: imp.name,
       category,
       isStandardLib,
-      importPath: name,
+      importPath: imp.path,
     };
   });
 
-  // Detect frameworks - now with full text access
+  // Detect frameworks
   const frameworks = detectFrameworks(libraries, cst);
 
   // Detect package manager
   const packageManager = detectPackageManager(language);
+
+  // Analyze external interactions
   const externalInteractions = analyzeExternalInteractions(cst, libraries);
+
+  // Analyze error handling
   const errorHandling = analyzeErrorHandling(cst, language);
+
+  // Extract output contract
   const outputContract = extractOutputContract(cst, language);
+
+  // Check for security issues (placeholder)
+  const securityIssues = libraries
+    .map(lib => getLibraryMetadata(lib.name, language))
+    .filter(meta => meta.deprecated)
+    .map(meta => ({
+      library: meta.name,
+      severity: 'medium' as const,
+      description: `${meta.name} is deprecated. Consider using: ${meta.alternatives?.join(', ')}`
+    }));
 
   return {
     libraries,
@@ -797,5 +981,9 @@ export function analyzeLibraries(
     externalInteractions,
     errorHandling,
     outputContract,
+    importUsage,
+    securityIssues: securityIssues.length > 0 ? securityIssues : undefined,
   };
 }
+
+

@@ -205,9 +205,44 @@ export const DOMAIN_TOKEN_TABLES: Record<string, DomainToken[]> = {
   validation: [
     { literal: 'required', semanticRole: 'mandatory-field', domain: 'validation' },
     { literal: 'optional', semanticRole: 'optional-field', domain: 'validation' },
-    { literal: 'valid', semanticRole: 'passes-validation', domain: 'validation' },
     { literal: 'invalid', semanticRole: 'fails-validation', domain: 'validation' },
   ],
+};
+
+export const LANGUAGE_MAGIC_EXCEPTIONS: Record<string, Set<string | number | boolean | null | undefined>> = {
+  typescript: new Set([0, 1, -1, '', null, undefined, true, false, 100, 200, 404, 500]),
+  python: new Set([0, 1, -1, '', 'None', 'True', 'False', 100, 200, 404, 500]),
+  go: new Set([0, 1, -1, '', 'nil', true, false]),
+  rust: new Set([0, 1, -1, '', 'None', true, false]),
+  java: new Set([0, 1, -1, '', null, true, false, 200, 404, 500]),
+  cpp: new Set([0, 1, -1, '', 'nullptr', true, false]),
+  c: new Set([0, 1, -1, '', 'NULL', true, false]),
+  ruby: new Set([0, 1, -1, '', 'nil', true, false]),
+  php: new Set([0, 1, -1, '', null, true, false]),
+};
+
+export const SEMANTIC_VALUE_PATTERNS = {
+  // HTTP Status Codes
+  httpStatus: (value: number) => value >= 100 && value <= 599,
+
+  // Timeouts/Delays (milliseconds)
+  timeout: (value: number) => value >= 100 && value <= 300000, // 100ms to 5min
+
+  // Percentages
+  percentage: (value: number) => value >= 0 && value <= 100,
+
+  // Port numbers
+  port: (value: number) => value >= 1 && value <= 65535,
+
+  // File permissions (octal)
+  filePermission: (value: number) =>
+    value === 644 || value === 755 || value === 777 || value === 400,
+
+  // Mathematical constants
+  mathConstant: (value: number) =>
+    Math.abs(value - Math.PI) < 0.001 ||
+    Math.abs(value - Math.E) < 0.001 ||
+    value === 0.5 || value === 0.25 || value === 0.75,
 };
 
 /**
@@ -421,67 +456,119 @@ export function analyzeControlFlowComplexity(cst: CSTNode): ControlFlowComplexit
   };
 }
 
+interface MagicValueContext {
+  nearbyText: string;
+  parentType: string;
+  isInCondition: boolean;
+  isInLoop: boolean;
+}
+
+function getMagicValueContext(node: CSTNode): MagicValueContext {
+  let parent = node.parent;
+  let nearbyText = '';
+  let isInCondition = false;
+  let isInLoop = false;
+
+  // Walk up tree to gather context
+  let current = node;
+  for (let i = 0; i < 3 && current; i++) {
+    if (current.parent) {
+      const siblings = current.parent.children;
+      const index = siblings.indexOf(current);
+      if (index > 0) {
+        nearbyText = siblings[index - 1].text + ' ' + nearbyText;
+      }
+
+      if (current.parent.type.includes('if') || current.parent.type.includes('condition')) {
+        isInCondition = true;
+      }
+      if (current.parent.type.includes('loop') || current.parent.type.includes('for') ||
+        current.parent.type.includes('while')) {
+        isInLoop = true;
+      }
+
+      current = current.parent;
+    }
+  }
+
+  return {
+    nearbyText: nearbyText.toLowerCase(),
+    parentType: parent?.type || '',
+    isInCondition,
+    isInLoop
+  };
+}
+
 
 /**
  * Detect magic values (literals that should be constants)
  */
-export function detectMagicValues(cst: CSTNode): MagicValue[] {
+/**
+ * ENHANCED: Detect magic values with language-specific exceptions and semantic understanding
+ */
+export function detectMagicValues(
+  cst: CSTNode,
+  language?: string // Add optional language parameter
+): MagicValue[] {
   const magicValues: MagicValue[] = [];
   const seenValues = new Set<string>();
 
+  // Get language-specific exceptions
+  const exceptions = language ? LANGUAGE_MAGIC_EXCEPTIONS[language] : new Set();
+
   function traverse(node: CSTNode) {
+    const context = getMagicValueContext(node);
+
     // String literals
     if (node.type === 'string' || node.type === 'string_literal' || node.type === 'template_string') {
       const value = node.text.replace(/['"]/g, '');
 
-      // Skip empty strings and very short strings
-      if (value.length > 2 && !seenValues.has(value)) {
-        // Detect semantic roles
-        let semanticRole: string | undefined;
-        const lowerValue = value.toLowerCase();
+      // Skip empty strings, very short strings, and exceptions
+      if (value.length <= 2 || exceptions.has(value)) {
+        return;
+      }
 
-        if (['error', 'warning', 'info', 'debug', 'critical'].includes(lowerValue)) {
-          semanticRole = 'log-level';
-        } else if (['get', 'post', 'put', 'delete', 'patch'].includes(lowerValue)) {
-          semanticRole = 'http-method';
-        } else if (value.match(/^\w+$/)) {
-          semanticRole = 'identifier-token';
+      if (!seenValues.has(value)) {
+        // Enhanced semantic role detection
+        let semanticRole = detectStringSemanticRole(value, context);
+
+        // Only report if it's truly a "magic" value
+        if (semanticRole && !isWellKnownConstant(value)) {
+          magicValues.push({
+            value,
+            type: 'string-token',
+            location: node.startPosition,
+            context: context.nearbyText.substring(0, 50),
+            semanticRole,
+          });
+          seenValues.add(value);
         }
-
-        magicValues.push({
-          value,
-          type: 'string-token',
-          location: node.startPosition,
-          context: node.parent?.text.substring(0, 50) || '',
-          semanticRole,
-        });
-        seenValues.add(value);
       }
     }
 
-    // Numeric literals (exclude 0, 1, -1 as they're common)
+    // Numeric literals with enhanced detection
     if (node.type === 'number' || node.type === 'integer' || node.type === 'float') {
       const value = parseFloat(node.text);
 
-      if (![0, 1, -1].includes(value) && !seenValues.has(node.text)) {
-        let semanticRole: string | undefined;
+      // Skip common exceptions
+      if (exceptions.has(value)) {
+        return;
+      }
 
-        if (value >= 100 && value <= 599) {
-          semanticRole = 'http-status';
-        } else if (value > 1000 && value < 100000) {
-          semanticRole = 'timeout-or-limit';
-        } else if (value > 0 && value < 1) {
-          semanticRole = 'weight-or-threshold';
+      if (!seenValues.has(node.text)) {
+        const semanticRole = detectNumericSemanticRole(value, context);
+
+        // Only report if semantic and not a well-known value
+        if (semanticRole) {
+          magicValues.push({
+            value,
+            type: 'numeric-constant',
+            location: node.startPosition,
+            context: context.nearbyText.substring(0, 50),
+            semanticRole,
+          });
+          seenValues.add(node.text);
         }
-
-        magicValues.push({
-          value,
-          type: 'numeric-constant',
-          location: node.startPosition,
-          context: node.parent?.text.substring(0, 50) || '',
-          semanticRole,
-        });
-        seenValues.add(node.text);
       }
     }
 
@@ -490,6 +577,113 @@ export function detectMagicValues(cst: CSTNode): MagicValue[] {
 
   traverse(cst);
   return magicValues;
+}
+
+function detectStringSemanticRole(value: string, context: MagicValueContext): string | undefined {
+  const lowerValue = value.toLowerCase();
+
+  // Log levels
+  if (['error', 'warning', 'info', 'debug', 'critical', 'trace'].includes(lowerValue)) {
+    return 'log-level';
+  }
+
+  // HTTP methods
+  if (['get', 'post', 'put', 'delete', 'patch', 'head', 'options'].includes(lowerValue)) {
+    return 'http-method';
+  }
+
+  // Environment names
+  if (['development', 'production', 'staging', 'test'].includes(lowerValue)) {
+    return 'environment';
+  }
+
+  // Common event names
+  if (['click', 'submit', 'change', 'load', 'error', 'ready'].includes(lowerValue)) {
+    return 'event-name';
+  }
+
+  // URLs/paths (heuristic)
+  if (value.startsWith('/') || value.startsWith('http')) {
+    return 'url-path';
+  }
+
+  // SQL keywords
+  if (['select', 'insert', 'update', 'delete', 'create', 'drop'].includes(lowerValue)) {
+    return 'sql-keyword';
+  }
+
+  // Looks like a token/identifier
+  if (value.match(/^[a-z][a-z0-9_-]*$/i) && value.length > 3) {
+    return 'identifier-token';
+  }
+
+  return undefined;
+}
+
+function detectNumericSemanticRole(value: number, context: MagicValueContext): string | undefined {
+  // HTTP status codes
+  if (SEMANTIC_VALUE_PATTERNS.httpStatus(value)) {
+    if (context.nearbyText.includes('status') || context.nearbyText.includes('code')) {
+      return 'http-status';
+    }
+  }
+
+  // Timeouts
+  if (SEMANTIC_VALUE_PATTERNS.timeout(value)) {
+    if (context.nearbyText.includes('timeout') || context.nearbyText.includes('delay') ||
+      context.nearbyText.includes('wait')) {
+      return 'timeout-ms';
+    }
+  }
+
+  // Percentages
+  if (SEMANTIC_VALUE_PATTERNS.percentage(value)) {
+    if (context.nearbyText.includes('percent') || context.nearbyText.includes('%')) {
+      return 'percentage';
+    }
+  }
+
+  // Ports
+  if (SEMANTIC_VALUE_PATTERNS.port(value)) {
+    if (context.nearbyText.includes('port')) {
+      return 'port-number';
+    }
+  }
+
+  // File permissions
+  if (SEMANTIC_VALUE_PATTERNS.filePermission(value)) {
+    return 'file-permission';
+  }
+
+  // Math constants
+  if (SEMANTIC_VALUE_PATTERNS.mathConstant(value)) {
+    return 'math-constant';
+  }
+
+  // Array indices/sizes (common pattern)
+  if (context.isInLoop && value > 0 && value < 1000) {
+    return 'loop-bound';
+  }
+
+  // Weights/thresholds
+  if (value > 0 && value < 1) {
+    if (context.nearbyText.includes('weight') || context.nearbyText.includes('threshold') ||
+      context.nearbyText.includes('confidence')) {
+      return 'weight-threshold';
+    }
+  }
+
+  return undefined;
+}
+
+function isWellKnownConstant(value: string): boolean {
+  const wellKnown = new Set([
+    'utf-8', 'utf8', 'ascii',
+    'localhost', '127.0.0.1',
+    'true', 'false', 'null', 'undefined',
+  ]);
+
+  return wellKnown.has(value.toLowerCase());
 }
 
 /**
@@ -650,5 +844,213 @@ export function calculateTestability(
     isIsolated,
     score,
     factors: factors.slice(0, 4),
+  };
+}
+
+export interface NormalizedControlFlow {
+  type: 'sequence' | 'branch' | 'loop' | 'error-handling' | 'call';
+  children: NormalizedControlFlow[];
+  metadata: {
+    originalLanguage: string;
+    originalConstruct: string;
+    lineNumber: number;
+  };
+  condition?: string; // For branches/loops
+  body?: string; // Simplified representation
+}
+
+/**
+ * Normalize control flow across languages
+ */
+export function normalizeControlFlow(
+  cst: CSTNode,
+  language: string
+): NormalizedControlFlow {
+  const normalized: NormalizedControlFlow = {
+    type: 'sequence',
+    children: [],
+    metadata: {
+      originalLanguage: language,
+      originalConstruct: cst.type,
+      lineNumber: cst.startPosition.row
+    }
+  };
+
+  // Map language-specific constructs to normalized types
+  if (isIfStatement(cst, language)) {
+    normalized.type = 'branch';
+    normalized.condition = extractCondition(cst, language);
+
+    // Process branches
+    const branches = extractBranches(cst, language);
+    normalized.children = branches.map(b => normalizeControlFlow(b, language));
+  }
+  else if (isLoopStatement(cst, language)) {
+    normalized.type = 'loop';
+    normalized.condition = extractCondition(cst, language);
+
+    const body = extractLoopBody(cst, language);
+    if (body) {
+      normalized.children = [normalizeControlFlow(body, language)];
+    }
+  }
+  else if (isErrorHandling(cst, language)) {
+    normalized.type = 'error-handling';
+
+    // Extract try/catch/finally or error check patterns
+    const handlers = extractErrorHandlers(cst, language);
+    normalized.children = handlers.map(h => normalizeControlFlow(h, language));
+  }
+  else if (isFunctionCall(cst, language)) {
+    normalized.type = 'call';
+    normalized.body = extractCallTarget(cst, language);
+  }
+  else {
+    // Process children as sequence
+    for (const child of cst.children) {
+      if (child.isNamed && isControlFlow(child, language)) {
+        normalized.children.push(normalizeControlFlow(child, language));
+      }
+    }
+  }
+
+  return normalized;
+}
+
+// Helper functions for normalization:
+
+function isIfStatement(node: CSTNode, language: string): boolean {
+  const ifTypes = ['if_statement', 'if_expression', 'conditional_expression'];
+  return ifTypes.some(t => node.type.includes(t));
+}
+
+function isLoopStatement(node: CSTNode, language: string): boolean {
+  const loopTypes = ['for', 'while', 'loop', 'each'];
+  return loopTypes.some(t => node.type.toLowerCase().includes(t));
+}
+
+function isErrorHandling(node: CSTNode, language: string): boolean {
+  const errorTypes = ['try', 'catch', 'except', 'finally', 'error'];
+  return errorTypes.some(t => node.type.toLowerCase().includes(t));
+}
+
+function isFunctionCall(node: CSTNode, language: string): boolean {
+  return node.type.includes('call');
+}
+
+function isControlFlow(node: CSTNode, language: string): boolean {
+  return isIfStatement(node, language) ||
+    isLoopStatement(node, language) ||
+    isErrorHandling(node, language) ||
+    isFunctionCall(node, language);
+}
+
+function extractCondition(node: CSTNode, language: string): string {
+  const conditionNode = node.children.find(c =>
+    c.type.includes('condition') || c.type.includes('test')
+  );
+  return conditionNode?.text.substring(0, 100) || '';
+}
+
+function extractBranches(node: CSTNode, language: string): CSTNode[] {
+  return node.children.filter(c =>
+    c.type.includes('consequence') ||
+    c.type.includes('alternative') ||
+    c.type.includes('block')
+  );
+}
+
+function extractLoopBody(node: CSTNode, language: string): CSTNode | null {
+  return node.children.find(c => c.type.includes('body') || c.type.includes('block')) || null;
+}
+
+function extractErrorHandlers(node: CSTNode, language: string): CSTNode[] {
+  return node.children.filter(c =>
+    c.type.includes('catch') || c.type.includes('except') || c.type.includes('finally')
+  );
+}
+
+function extractCallTarget(node: CSTNode, language: string): string {
+  const funcNode = node.children.find(c => c.type.includes('function') || c.type === 'identifier');
+  return funcNode?.text.substring(0, 50) || '';
+}
+
+export interface SideEffectAnalysis {
+  hasSideEffects: boolean;
+  sideEffectTypes: ('io' | 'mutation' | 'exception' | 'timing' | 'network' | 'randomness')[];
+  purity: 'pure' | 'referentially-transparent' | 'impure';
+  memoizable: boolean;
+  details: string[];
+}
+
+/**
+ * Analyze side effects with more granularity
+ */
+export function analyzeSideEffects(
+  cst: CSTNode,
+  scope: 'global' | 'module' | 'function'
+): SideEffectAnalysis {
+  const sideEffectTypes = new Set<SideEffectAnalysis['sideEffectTypes'][number]>();
+  const details: string[] = [];
+  const text = cst.text.toLowerCase();
+
+  // I/O operations
+  if (text.includes('console.') || text.includes('print') ||
+    text.includes('write') || text.includes('read')) {
+    sideEffectTypes.add('io');
+    details.push('I/O operations detected');
+  }
+
+  // Network calls
+  if (text.includes('fetch') || text.includes('http') || text.includes('request')) {
+    sideEffectTypes.add('network');
+    details.push('Network calls detected');
+  }
+
+  // Mutations
+  if (text.includes('=') && !text.includes('==') && !text.includes('===')) {
+    sideEffectTypes.add('mutation');
+    details.push('Variable mutations detected');
+  }
+
+  // Exception throwing
+  if (text.includes('throw') || text.includes('raise') || text.includes('panic')) {
+    sideEffectTypes.add('exception');
+    details.push('Exception throwing detected');
+  }
+
+  // Timing operations
+  if (text.includes('date') || text.includes('time') || text.includes('now()')) {
+    sideEffectTypes.add('timing');
+    details.push('Time-dependent operations');
+  }
+
+  // Randomness
+  if (text.includes('random') || text.includes('uuid')) {
+    sideEffectTypes.add('randomness');
+    details.push('Random number generation');
+  }
+
+  // Determine purity
+  let purity: SideEffectAnalysis['purity'] = 'pure';
+  if (sideEffectTypes.size > 0) {
+    // If only mutations, might still be referentially transparent
+    if (sideEffectTypes.size === 1 && sideEffectTypes.has('mutation') && scope === 'function') {
+      purity = 'referentially-transparent';
+    } else {
+      purity = 'impure';
+    }
+  }
+
+  // Memoizable if pure or only depends on inputs
+  const memoizable = purity === 'pure' ||
+    (purity === 'referentially-transparent' && !sideEffectTypes.has('timing') && !sideEffectTypes.has('randomness'));
+
+  return {
+    hasSideEffects: sideEffectTypes.size > 0,
+    sideEffectTypes: Array.from(sideEffectTypes),
+    purity,
+    memoizable,
+    details
   };
 }
