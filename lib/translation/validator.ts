@@ -30,7 +30,7 @@ export interface ComparisonReport {
   behavior: {
     determinism: { expected: boolean; actual: boolean; match: boolean };
     executionModel: { expected: string; actual: string; acceptable: boolean };
-    sideEffects: { expected: string; actual: string; match: boolean };
+    sideEffects: { expected: boolean; actual: boolean; match: boolean; expectedPurity: string; actualPurity: string };
   };
   quality: {
     testability: { expected: number; actual: number; delta: number };
@@ -57,7 +57,7 @@ export async function validateTranslation(
   const info: ValidationIssue[] = [];
 
   // Analyze translated code to get its ReviewIR
-  let translatedContext;
+  let translatedContext: ReturnType<typeof analyzeCodeContext>;
 
   if (targetCST) {
     // Use provided CST
@@ -269,9 +269,11 @@ export async function validateTranslation(
         acceptable: executionModelAcceptable,
       },
       sideEffects: {
-        expected: sourceIR.behavior.sideEffects,
-        actual: translatedIR.behavior.sideEffects,
-        match: sourceIR.behavior.sideEffects === translatedIR.behavior.sideEffects,
+        expected: sourceIR.behavior.sideEffects.hasSideEffects,
+        actual: translatedIR.behavior.sideEffects.hasSideEffects,
+        match: sourceIR.behavior.sideEffects.hasSideEffects === translatedIR.behavior.sideEffects.hasSideEffects,
+        expectedPurity: sourceIR.behavior.sideEffects.purity,
+        actualPurity: translatedIR.behavior.sideEffects.purity,
       },
     },
     quality: {
@@ -341,7 +343,7 @@ function createEmptyReport(): ComparisonReport {
     behavior: {
       determinism: { expected: false, actual: false, match: false },
       executionModel: { expected: '', actual: '', acceptable: false },
-      sideEffects: { expected: '', actual: '', match: false },
+      sideEffects: { expected: false, actual: false, match: false, expectedPurity: 'unknown', actualPurity: 'unknown' },
     },
     quality: {
       testability: { expected: 0, actual: 0, delta: 0 },

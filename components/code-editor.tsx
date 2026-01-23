@@ -4,23 +4,140 @@ import { CodeContextViewer } from "@/components/CodeContextViewer";
 import { CodeReviewViewer } from "@/components/CodeReviewer";
 import ResourceFetcher from "@/components/ResourceFetcher";
 import { TranslationViewer } from "@/components/TranslationViewer";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { useCodeContext } from "@/lib/analyzer/context-detector";
 import { LANGUAGE_CONFIG } from "@/lib/language-config";
 import { getMDNDoc } from "@/lib/mdn-docs";
 import { useTranslation } from "@/lib/translation/use-translation";
 import { Editor } from "@monaco-editor/react";
-import { ArrowRightLeft, BookOpen, Brain, Loader2, Play, Sparkles } from "lucide-react";
+import { AnimatePresence, motion } from "framer-motion";
+import {
+  ArrowRightLeft,
+  BookOpen,
+  Brain,
+  ChevronDown,
+  Code2,
+  Cpu,
+  Loader2,
+  Moon,
+  Play,
+  Server,
+  Sparkles,
+  Sun,
+  Terminal,
+  Zap,
+} from "lucide-react";
 import { useTheme } from "next-themes";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ModeToggle } from "./mode-toggle";
 
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3001';
+
+// Animated background orbs component
+function BackgroundOrbs() {
+  return (
+    <div className="fixed inset-0 overflow-hidden pointer-events-none" aria-hidden="true">
+      {/* Primary orb - purple/violet */}
+      <div
+        className="absolute -top-40 -left-40 w-96 h-96 rounded-full animate-orb-1 opacity-30 dark:opacity-20"
+        style={{
+          background: 'radial-gradient(circle, oklch(0.65 0.28 280 / 0.4) 0%, transparent 70%)',
+          filter: 'blur(60px)',
+        }}
+      />
+      {/* Secondary orb - cyan */}
+      <div
+        className="absolute top-1/4 -right-20 w-80 h-80 rounded-full animate-orb-2 opacity-25 dark:opacity-15"
+        style={{
+          background: 'radial-gradient(circle, oklch(0.75 0.22 195 / 0.4) 0%, transparent 70%)',
+          filter: 'blur(50px)',
+        }}
+      />
+      {/* Tertiary orb - green/teal */}
+      <div
+        className="absolute -bottom-20 left-1/3 w-72 h-72 rounded-full animate-orb-3 opacity-20 dark:opacity-15"
+        style={{
+          background: 'radial-gradient(circle, oklch(0.8 0.22 145 / 0.35) 0%, transparent 70%)',
+          filter: 'blur(45px)',
+        }}
+      />
+      {/* Accent orb - warm orange */}
+      <div
+        className="absolute top-1/2 left-1/4 w-64 h-64 rounded-full animate-orb-2 opacity-15 dark:opacity-10"
+        style={{
+          background: 'radial-gradient(circle, oklch(0.75 0.2 35 / 0.3) 0%, transparent 70%)',
+          filter: 'blur(40px)',
+          animationDelay: '-5s',
+        }}
+      />
+    </div>
+  );
+}
+
+// Status indicator component
+function StatusIndicator({ status, label }: { status: 'idle' | 'running' | 'success' | 'error', label: string }) {
+  const colors = {
+    idle: 'bg-muted-foreground/40',
+    running: 'bg-yellow-500 animate-pulse',
+    success: 'bg-emerald-500',
+    error: 'bg-red-500',
+  };
+
+  return (
+    <div className="flex items-center gap-2">
+      <div className={`w-2 h-2 rounded-full ${colors[status]}`} />
+      <span className="text-xs text-muted-foreground">{label}</span>
+    </div>
+  );
+}
+
+// Language badge with icon
+function LanguageBadge({ language, type }: { language: string, type: 'client' | 'server' | 'none' }) {
+  const icons = {
+    client: <Zap className="h-3 w-3" />,
+    server: <Server className="h-3 w-3" />,
+    none: <Code2 className="h-3 w-3" />,
+  };
+
+  const colors = {
+    client: 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20',
+    server: 'bg-blue-500/10 text-blue-500 border-blue-500/20',
+    none: 'bg-muted text-muted-foreground border-border',
+  };
+
+  return (
+    <Badge variant="outline" className={`gap-1.5 ${colors[type]}`}>
+      {icons[type]}
+      {language.toUpperCase()}
+    </Badge>
+  );
+}
 
 export default function CodeEditor() {
   const [code, setCode] = useState("");
   const [output, setOutput] = useState("");
   const [language, setLanguage] = useState("javascript");
-  const [editorWidth, setEditorWidth] = useState(40);
+  const [editorWidth, setEditorWidth] = useState(45);
   const [activeTab, setActiveTab] = useState<"output" | "context" | "review" | "translate" | "resources">("output");
   const [isDragging, setIsDragging] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
@@ -32,10 +149,12 @@ export default function CodeEditor() {
   const rightPanelRef = useRef<HTMLDivElement>(null);
   const [targetLanguage, setTargetLanguage] = useState<string>("python");
   const { translate, isTranslating, result: translationResult, error: translationError, reset: resetTranslation } = useTranslation();
-  const { theme, resolvedTheme } = useTheme();
+  const { theme, resolvedTheme, setTheme } = useTheme();
+  const [mounted, setMounted] = useState(false);
 
-
-
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   // Use the context hook for code analysis
   const { context: codeContext, isAnalyzing, error: analysisError } = useCodeContext(code);
@@ -50,6 +169,12 @@ export default function CodeEditor() {
     return ['python', 'java', 'go', 'cpp', 'c', 'ruby', 'php'].includes(lang);
   };
 
+  const getExecutionType = (lang: string): 'client' | 'server' | 'none' => {
+    if (canRunClientSide(lang)) return 'client';
+    if (canRunOnBackend(lang)) return 'server';
+    return 'none';
+  };
+
   const runCode = async () => {
     if (!code.trim()) {
       setOutput("Error: No code to execute");
@@ -58,18 +183,14 @@ export default function CodeEditor() {
 
     setIsRunning(true);
     setOutput("Executing code...");
+    setActiveTab("output");
 
     try {
-      // Client-side execution (JavaScript/TypeScript)
       if (canRunClientSide(language)) {
         runCodeClientSide();
-      }
-      // Backend execution (Python, Java, Go, etc.)
-      else if (canRunOnBackend(language)) {
+      } else if (canRunOnBackend(language)) {
         await runCodeOnBackend();
-      }
-      // Unsupported language
-      else {
+      } else {
         setOutput(`Error: Language "${language}" is not supported yet`);
         setIsRunning(false);
       }
@@ -79,31 +200,26 @@ export default function CodeEditor() {
     }
   };
 
-  // Run JavaScript/TypeScript in browser
   const runCodeClientSide = () => {
     try {
       const logs: string[] = [];
       const originalLog = console.log;
       const originalError = console.error;
 
-      // Capture console.log
       console.log = (...args) => {
         logs.push(args.map(arg =>
           typeof arg === 'object' ? JSON.stringify(arg, null, 2) : String(arg)
         ).join(' '));
       };
 
-      // Capture console.error
       console.error = (...args) => {
         logs.push('ERROR: ' + args.map(arg =>
           typeof arg === 'object' ? JSON.stringify(arg, null, 2) : String(arg)
         ).join(' '));
       };
 
-      // Execute code
       eval(code);
 
-      // Restore console
       console.log = originalLog;
       console.error = originalError;
 
@@ -115,18 +231,12 @@ export default function CodeEditor() {
     }
   };
 
-  // Run code on backend (Python, Java, Go, etc.)
   const runCodeOnBackend = async () => {
     try {
       const response = await fetch(`${BACKEND_URL}/api/execute`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          code: code,
-          language: language
-        })
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code, language })
       });
 
       if (!response.ok) {
@@ -134,15 +244,13 @@ export default function CodeEditor() {
       }
 
       const result = await response.json();
-
-      // Format output
       let formattedOutput = '';
 
-      if (result.output && result.output.trim()) {
+      if (result.output?.trim()) {
         formattedOutput += `Output:\n${result.output}`;
       }
 
-      if (result.error && result.error.trim()) {
+      if (result.error?.trim()) {
         formattedOutput += `${formattedOutput ? '\n\n' : ''}Error:\n${result.error}`;
       }
 
@@ -150,33 +258,27 @@ export default function CodeEditor() {
         formattedOutput = 'Code executed successfully (no output)';
       }
 
-      formattedOutput += `\n\nExecution time: ${result.executionTime}`;
+      formattedOutput += `\n\n---\nExecution time: ${result.executionTime}`;
       formattedOutput += `\nExit code: ${result.exitCode}`;
 
       setOutput(formattedOutput);
-
     } catch (error) {
-      if (error instanceof Error) {
-        if (error.message.includes('Failed to fetch')) {
-          setOutput(
-            `Connection Error: Cannot connect to backend server.\n\n` +
-            `Make sure the backend is running:\n` +
-            `  cd solace-backend\n` +
-            `  npm start\n\n` +
-            `Backend URL: ${BACKEND_URL}`
-          );
-        } else {
-          setOutput(`Error: ${error.message}`);
-        }
+      if (error instanceof Error && error.message.includes('Failed to fetch')) {
+        setOutput(
+          `Connection Error: Cannot connect to backend server.\n\n` +
+          `Make sure the backend is running:\n` +
+          `  cd solace-backend\n` +
+          `  npm start\n\n` +
+          `Backend URL: ${BACKEND_URL}`
+        );
       } else {
-        setOutput(`Error: ${String(error)}`);
+        setOutput(`Error: ${error instanceof Error ? error.message : String(error)}`);
       }
     } finally {
       setIsRunning(false);
     }
   };
 
-  // Get code review from backend using Qwen 3-32B
   const getCodeReview = async () => {
     if (!code.trim()) {
       setReviewError("No code to review");
@@ -195,13 +297,11 @@ export default function CodeEditor() {
     try {
       const response = await fetch(`${BACKEND_URL}/api/review`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           reviewIR: codeContext.reviewIR,
           codeContext: codeContext,
-          prunedTree: null, // Let backend generate it
+          prunedTree: null,
           fileContents: code
         })
       });
@@ -220,50 +320,33 @@ export default function CodeEditor() {
       } else {
         throw new Error('Invalid response from server');
       }
-
     } catch (error) {
-      if (error instanceof Error) {
-        if (error.message.includes('Failed to fetch')) {
-          setReviewError(
-            `Connection Error: Cannot connect to backend server.\n\n` +
-            `Make sure the backend is running with GROQ_API_KEY set:\n` +
-            `  cd solace-backend\n` +
-            `  GROQ_API_KEY=your_key npm start\n\n` +
-            `Backend URL: ${BACKEND_URL}`
-          );
-        } else {
-          setReviewError(error.message);
-        }
+      if (error instanceof Error && error.message.includes('Failed to fetch')) {
+        setReviewError(
+          `Connection Error: Cannot connect to backend server.\n\n` +
+          `Make sure the backend is running with GROQ_API_KEY set.`
+        );
       } else {
-        setReviewError(String(error));
+        setReviewError(error instanceof Error ? error.message : String(error));
       }
     } finally {
       setIsReviewing(false);
     }
   };
 
-  const handleMouseMove = (e: MouseEvent) => {
-    if (!containerRef.current) return;
+  const handleMouseMove = useCallback((e: MouseEvent) => {
+    if (!containerRef.current || !isDragging) return;
 
-    if (isDragging) {
-      const containerRect = containerRef.current.getBoundingClientRect();
-      const newWidth = ((e.clientX - containerRect.left) / containerRect.width) * 100;
+    const containerRect = containerRef.current.getBoundingClientRect();
+    const newWidth = ((e.clientX - containerRect.left) / containerRect.width) * 100;
 
-      if (newWidth >= 20 && newWidth <= 70) {
-        setEditorWidth(newWidth);
-      }
+    if (newWidth >= 25 && newWidth <= 75) {
+      setEditorWidth(newWidth);
     }
-  };
-
+  }, [isDragging]);
 
   const handleTranslate = async () => {
-    if (!code.trim()) {
-      return;
-    }
-
-    if (!codeContext || !codeContext.reviewIR) {
-      return;
-    }
+    if (!code.trim() || !codeContext?.reviewIR) return;
 
     setActiveTab("translate");
 
@@ -274,6 +357,7 @@ export default function CodeEditor() {
       reviewIR: codeContext.reviewIR,
     });
   };
+
   useEffect(() => {
     if (isDragging) {
       document.addEventListener('mousemove', handleMouseMove);
@@ -291,413 +375,531 @@ export default function CodeEditor() {
       document.body.style.cursor = '';
       document.body.style.userSelect = '';
     };
-  }, [isDragging]);
+  }, [isDragging, handleMouseMove]);
 
-  // Get button text and status
-  const getRunButtonInfo = () => {
-    if (isRunning) {
-      return { text: 'Running...', disabled: true, icon: <Loader2 className="h-4 w-4 animate-spin" /> };
-    }
-    if (canRunClientSide(language)) {
-      return { text: 'Run Code (Browser)', disabled: false, icon: <Play className="h-4 w-4" /> };
-    }
-    if (canRunOnBackend(language)) {
-      return { text: 'Run Code (Server)', disabled: false, icon: <Play className="h-4 w-4" /> };
-    }
-    return { text: 'Not Supported', disabled: true, icon: <Play className="h-4 w-4" /> };
-  };
+  const tabs = [
+    { id: 'output' as const, label: 'Output', icon: Terminal, color: 'text-foreground', loading: false },
+    { id: 'context' as const, label: 'Context', icon: Brain, color: 'text-blue-500', loading: isAnalyzing },
+    { id: 'review' as const, label: 'AI Review', icon: Sparkles, color: 'text-cyan-500', loading: isReviewing },
+    { id: 'translate' as const, label: 'Translate', icon: ArrowRightLeft, color: 'text-purple-500', loading: isTranslating },
+    { id: 'resources' as const, label: 'Resources', icon: BookOpen, color: 'text-emerald-500', loading: false },
+  ];
 
-  const runButtonInfo = getRunButtonInfo();
+  const languages = [
+    { value: 'javascript', label: 'JavaScript', group: 'Browser' },
+    { value: 'typescript', label: 'TypeScript', group: 'Browser' },
+    { value: 'python', label: 'Python', group: 'Server' },
+    { value: 'java', label: 'Java', group: 'Server' },
+    { value: 'go', label: 'Go', group: 'Server' },
+    { value: 'cpp', label: 'C++', group: 'Server' },
+    { value: 'c', label: 'C', group: 'Server' },
+    { value: 'ruby', label: 'Ruby', group: 'Server' },
+    { value: 'php', label: 'PHP', group: 'Server' },
+    { value: 'rust', label: 'Rust', group: 'Analysis Only' },
+  ];
+
+  const targetLanguages = [
+    { value: 'typescript', label: 'TypeScript' },
+    { value: 'python', label: 'Python' },
+    { value: 'java', label: 'Java' },
+    { value: 'go', label: 'Go' },
+    { value: 'rust', label: 'Rust' },
+    { value: 'cpp', label: 'C++' },
+    { value: 'c', label: 'C' },
+    { value: 'ruby', label: 'Ruby' },
+    { value: 'php', label: 'PHP' },
+    { value: 'javascript', label: 'JavaScript' },
+  ];
+
+  if (!mounted) {
+    return (
+      <div className="flex h-screen w-full items-center justify-center bg-background">
+        <div className="flex flex-col items-center gap-4">
+          <Loader2 className="h-8 w-8 animate-spin text-primary" />
+          <span className="text-sm text-muted-foreground">Loading Solace...</span>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div className="flex h-screen w-full flex-col bg-background">
-      {/* Header */}
-      <div className="flex items-center justify-between border-b border-border bg-muted/40 px-6 py-4">
-        <div className="flex items-center gap-4">
-          <h1 className="text-xl font-semibold text-foreground">Solace</h1>
-          <div className="h-6 w-px bg-border" />
-          <select
-            value={language}
-            onChange={(e) => setLanguage(e.target.value)}
-            className="rounded-lg border border-input bg-background px-3 py-1.5 text-sm text-foreground outline-none transition-colors hover:border-accent-foreground/50 focus:border-primary"
-          >
-            <optgroup label="Browser (Client-side)">
-              <option value="javascript">JavaScript</option>
-              <option value="typescript">TypeScript</option>
-            </optgroup>
-            <optgroup label="Server (Docker)">
-              <option value="python">Python</option>
-              <option value="java">Java</option>
-              <option value="go">Go</option>
-              <option value="cpp">C++</option>
-              <option value="c">C</option>
-              <option value="ruby">Ruby</option>
-              <option value="php">PHP</option>
-            </optgroup>
-          </select>
+    <TooltipProvider delayDuration={300}>
+      <div className="relative flex h-screen w-full flex-col bg-background overflow-hidden">
+        {/* Animated background */}
+        <BackgroundOrbs />
 
-
-          <select
-            value={targetLanguage}
-            onChange={(e) => {
-              setTargetLanguage(e.target.value);
-              resetTranslation();
-            }}
-            className="rounded-lg border border-input bg-background px-3 py-1.5 text-sm text-foreground outline-none transition-colors hover:border-accent-foreground/50 focus:border-purple-500"
-          >
-            <option value="typescript">→ TypeScript</option>
-            <option value="python">→ Python</option>
-            <option value="java">→ Java</option>
-            <option value="go">→ Go</option>
-            <option value="rust">→ Rust</option>
-            <option value="cpp">→ C++</option>
-            <option value="c">→ C</option>
-            <option value="ruby">→ Ruby</option>
-            <option value="php">→ PHP</option>
-            <option value="javascript">→ JavaScript</option>
-          </select>
-        </div>
-
-        <div className="flex items-center gap-3">
-          {/* Execution mode indicator */}
-          {canRunClientSide(language) && (
-            <span className="text-xs text-green-500">• Runs in browser</span>
-          )}
-          {canRunOnBackend(language) && (
-            <span className="text-xs text-blue-500">• Runs on server</span>
-          )}
-          {!canRunClientSide(language) && !canRunOnBackend(language) && (
-            <span className="text-xs text-yellow-500">• Not supported yet</span>
-          )}
-
-          {/* Run button */}
-          <button
-            onClick={runCode}
-            disabled={runButtonInfo.disabled}
-            className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow-lg shadow-blue-500/20 transition-all hover:bg-blue-500 hover:shadow-blue-500/30 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {runButtonInfo.icon}
-            {runButtonInfo.text}
-          </button>
-
-          {/* Review button */}
-          <button
-            onClick={getCodeReview}
-            disabled={isReviewing || isAnalyzing || !codeContext}
-            className="flex items-center gap-2 rounded-lg bg-cyan-600 px-4 py-2 text-sm font-medium text-white shadow-lg shadow-cyan-500/20 transition-all hover:bg-cyan-500 hover:shadow-cyan-500/30 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {isReviewing ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <Sparkles className="h-4 w-4" />
-            )}
-            {isReviewing ? 'Reviewing...' : 'Get Review'}
-          </button>
-
-
-
-
-
-          <button
-            onClick={handleTranslate}
-            disabled={isTranslating || isAnalyzing || !codeContext || language === targetLanguage}
-            className="flex items-center gap-2 rounded-lg bg-purple-600 px-4 py-2 text-sm font-medium text-white shadow-lg shadow-purple-500/20 transition-all hover:bg-purple-500 hover:shadow-purple-500/30 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {isTranslating ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <ArrowRightLeft className="h-4 w-4" />
-            )}
-            {isTranslating ? 'Translating...' : 'Translate'}
-          </button>
-
-          <button
-            onClick={() => setActiveTab("translate")}
-            className={`flex items-center gap-2 px-6 py-3 text-sm font-medium transition-colors border-b-2 ${activeTab === "translate"
-              ? "border-purple-500 text-foreground bg-accent/50"
-              : "border-transparent text-muted-foreground hover:text-foreground hover:bg-accent/30"
-              }`}
-          >
-            <ArrowRightLeft className="h-4 w-4" />
-            Translate
-            {isTranslating && (
-              <div className="animate-spin rounded-full h-3 w-3 border-b border-purple-500" />
-            )}
-          </button>
-
-
-
-          <button
-            onClick={() => setActiveTab("resources")}
-            className={`flex items-center gap-2 px-6 py-3 text-sm font-medium transition-colors border-b-2 ${activeTab === "resources"
-              ? "border-emerald-500 text-white bg-zinc-900/50"
-              : "border-transparent text-zinc-400 hover:text-white hover:bg-zinc-900/30"
-              }`}
-          >
-            <BookOpen className="h-4 w-4" />
-            Resources
-          </button>
-
-          <div className="h-6 w-px bg-border mx-2" />
-          <ModeToggle />
-        </div>
-      </div>
-
-      {/* Editor and Output */}
-      <div ref={containerRef} className="flex flex-1 min-h-0">
-        {/* Editor Panel */}
-        <div
-          className="flex flex-col border-r border-border"
-          style={{ width: `${editorWidth}%` }}
+        {/* Header */}
+        <motion.header
+          initial={{ opacity: 0, y: -20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5, ease: "easeOut" }}
+          className="relative z-10 flex items-center justify-between border-b border-border/50 glass-subtle px-6 py-3"
         >
-          <div className="border-b border-border bg-muted/40 px-6 py-2">
-            <span className="text-sm font-medium text-muted-foreground">Editor</span>
-          </div>
-          <div className="flex-1">
-            <Editor
-              height="100%"
-              language={language}
-              value={code}
-              onChange={(value) => setCode(value || "")}
-              theme={resolvedTheme === 'dark' ? "vs-dark" : "light"}
-              onMount={(editor, monaco) => {
-                const supportedLanguages = [
-                  'javascript', 'typescript', 'python', 'cpp',
-                  'rust', 'go', 'php', 'java'
-                ];
-
-                supportedLanguages.forEach(lang => {
-                  // Register Hover Provider
-                  monaco.languages.registerHoverProvider(lang, {
-                    provideHover: (model: any, position: any) => {
-                      const word = model.getWordAtPosition(position);
-                      if (!word) return null;
-
-                      const wordText = word.word;
-                      const currentLang = model.getLanguageId();
-
-                      const doc = getMDNDoc(wordText, currentLang);
-
-                      if (!doc) return null;
-
-                      return {
-                        range: new monaco.Range(
-                          position.lineNumber,
-                          word.startColumn,
-                          position.lineNumber,
-                          word.endColumn
-                        ),
-                        contents: [
-                          { value: `**${wordText}**` },
-                          { value: doc.description },
-                          { value: `[MDN Reference ↗](${doc.mdn})` }
-                        ]
-                      };
-                    }
-                  });
-
-                  // Register Completion Provider
-                  if (lang in LANGUAGE_CONFIG) {
-                    const config = LANGUAGE_CONFIG[lang];
-                    monaco.languages.registerCompletionItemProvider(lang, {
-                      provideCompletionItems: (model: any, position: any) => {
-                        const word = model.getWordUntilPosition(position);
-                        const range = {
-                          startLineNumber: position.lineNumber,
-                          endLineNumber: position.lineNumber,
-                          startColumn: word.startColumn,
-                          endColumn: word.endColumn
-                        };
-
-                        const suggestions: any[] = [];
-
-                        // Keywords
-                        config.keywords.forEach(keyword => {
-                          const doc = getMDNDoc(keyword, lang);
-                          suggestions.push({
-                            label: keyword,
-                            kind: monaco.languages.CompletionItemKind.Keyword,
-                            insertText: keyword,
-                            documentation: doc ? {
-                              value: `${doc.description}\n\n[MDN Reference](${doc.mdn})`
-                            } : "Keyword",
-                            range: range
-                          });
-                        });
-
-                        // Built-ins
-                        config.builtins.forEach(builtin => {
-                          const doc = getMDNDoc(builtin, lang);
-                          suggestions.push({
-                            label: builtin,
-                            kind: monaco.languages.CompletionItemKind.Function,
-                            insertText: builtin,
-                            documentation: doc ? {
-                              value: `${doc.description}\n\n[MDN Reference](${doc.mdn})`
-                            } : "Built-in",
-                            range: range
-                          });
-                        });
-
-                        // Snippets
-                        config.snippets.forEach(snippet => {
-                          suggestions.push({
-                            label: snippet.label,
-                            kind: monaco.languages.CompletionItemKind.Snippet,
-                            insertText: snippet.insertText,
-                            insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
-                            documentation: snippet.documentation,
-                            range: range
-                          });
-                        });
-
-                        return { suggestions };
-                      }
-                    });
-                  }
-                });
-              }}
-              options={{
-                minimap: { enabled: false },
-                fontSize: 14,
-                fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
-                lineNumbers: "on",
-                scrollBeyondLastLine: true,
-                automaticLayout: true,
-                tabSize: 2,
-                wordWrap: "on",
-                padding: { top: 16, bottom: 16 },
-                smoothScrolling: true,
-                cursorBlinking: "smooth",
-                cursorSmoothCaretAnimation: "on",
-                renderLineHighlight: "all",
-                bracketPairColorization: { enabled: true },
-                scrollbar: {
-                  vertical: "visible",
-                  useShadows: true,
-                  verticalScrollbarSize: 10,
-                },
-              }}
-            />
-          </div>
-        </div>
-
-        {/* Resizable Divider */}
-        <div
-          className="w-1 cursor-col-resize bg-border hover:bg-primary transition-colors"
-          onMouseDown={() => setIsDragging(true)}
-        />
-
-        {/* Right Panel - Tabbed Output/Context/Review */}
-        <div
-          ref={rightPanelRef}
-          className="flex flex-col bg-background"
-          style={{ width: `${100 - editorWidth}%` }}
-        >
-          {/* Tab Headers */}
-          <div className="flex border-b border-border bg-muted/40">
-            <button
-              onClick={() => setActiveTab("output")}
-              className={`flex items-center gap-2 px-6 py-3 text-sm font-medium transition-colors border-b-2 ${activeTab === "output"
-                ? "border-primary text-foreground bg-accent/50"
-                : "border-transparent text-muted-foreground hover:text-foreground hover:bg-accent/30"
-                }`}
+          {/* Left section - Logo and language selection */}
+          <div className="flex items-center gap-5">
+            {/* Logo */}
+            <motion.div
+              className="flex items-center gap-3"
+              whileHover={{ scale: 1.02 }}
+              transition={{ type: "spring", stiffness: 400 }}
             >
-              <Play className="h-4 w-4" />
-              Output
-            </button>
-            <button
-              onClick={() => setActiveTab("context")}
-              className={`flex items-center gap-2 px-6 py-3 text-sm font-medium transition-colors border-b-2 ${activeTab === "context"
-                ? "border-primary text-foreground bg-accent/50"
-                : "border-transparent text-muted-foreground hover:text-foreground hover:bg-accent/30"
-                }`}
-            >
-              <Brain className="h-4 w-4" />
-              Context
-              {isAnalyzing && (
-                <div className="animate-spin rounded-full h-3 w-3 border-b border-blue-500" />
-              )}
-            </button>
-            <button
-              onClick={() => setActiveTab("review")}
-              className={`flex items-center gap-2 px-6 py-3 text-sm font-medium transition-colors border-b-2 ${activeTab === "review"
-                ? "border-cyan-500 text-foreground bg-accent/50"
-                : "border-transparent text-muted-foreground hover:text-foreground hover:bg-accent/30"
-                }`}
-            >
-              <Sparkles className="h-4 w-4" />
-              AI Review
-              {isReviewing && (
-                <div className="animate-spin rounded-full h-3 w-3 border-b border-cyan-500" />
-              )}
-            </button>
-          </div>
+              <div className="relative">
+                <div className="absolute inset-0 bg-gradient-to-br from-violet-500 to-cyan-500 rounded-lg blur-md opacity-50" />
+                <div className="relative flex h-9 w-9 items-center justify-center rounded-lg bg-gradient-to-br from-violet-500 to-cyan-500 shadow-lg">
+                  <Cpu className="h-5 w-5 text-white" />
+                </div>
+              </div>
+              <div className="flex flex-col">
+                <h1 className="text-lg font-bold tracking-tight text-foreground">
+                  Solace
+                </h1>
+                <span className="text-[10px] font-medium text-muted-foreground -mt-0.5">
+                  AI Code Analysis
+                </span>
+              </div>
+            </motion.div>
 
-          {/* Tab Content */}
-          <div className="flex-1 overflow-hidden">
-            {activeTab === "output" ? (
-              <div className="flex-1 h-full overflow-auto p-6">
-                {output ? (
-                  <pre className="font-mono text-sm text-foreground whitespace-pre-wrap">
-                    {output}
-                  </pre>
-                ) : (
-                  <div className="flex h-full items-center justify-center">
-                    <div className="text-center">
-                      <p className="text-sm text-muted-foreground mb-2">
-                        Run your code to see the output here
-                      </p>
-                      <p className="text-xs text-muted-foreground/80">
-                        {canRunClientSide(language)
-                          ? '• Runs instantly in your browser'
-                          : canRunOnBackend(language)
-                            ? '• Requires backend server to be running'
-                            : '• This language is not supported yet'}
-                      </p>
-                    </div>
+            <div className="h-8 w-px bg-border/50" />
+
+            {/* Language selectors */}
+            <div className="flex items-center gap-3">
+              <Select value={language} onValueChange={setLanguage}>
+                <SelectTrigger className="w-[140px] h-9 bg-background/50 border-border/50 hover:bg-accent/50 transition-colors">
+                  <div className="flex items-center gap-2">
+                    <Code2 className="h-4 w-4 text-muted-foreground" />
+                    <SelectValue />
                   </div>
+                </SelectTrigger>
+                <SelectContent className="glass-heavy">
+                  {['Browser', 'Server', 'Analysis Only'].map(group => (
+                    <div key={group}>
+                      <div className="px-2 py-1.5 text-xs font-semibold text-muted-foreground">
+                        {group}
+                      </div>
+                      {languages.filter(l => l.group === group).map(lang => (
+                        <SelectItem key={lang.value} value={lang.value}>
+                          {lang.label}
+                        </SelectItem>
+                      ))}
+                    </div>
+                  ))}
+                </SelectContent>
+              </Select>
+
+              <div className="flex items-center gap-1.5 text-muted-foreground">
+                <ArrowRightLeft className="h-4 w-4" />
+              </div>
+
+              <Select 
+                value={targetLanguage} 
+                onValueChange={(val) => {
+                  setTargetLanguage(val);
+                  resetTranslation();
+                }}
+              >
+                <SelectTrigger className="w-[130px] h-9 bg-background/50 border-border/50 hover:bg-accent/50 transition-colors">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent className="glass-heavy">
+                  {targetLanguages.map(lang => (
+                    <SelectItem key={lang.value} value={lang.value} disabled={lang.value === language}>
+                      {lang.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+
+              <LanguageBadge language={language} type={getExecutionType(language)} />
+            </div>
+          </div>
+
+          {/* Right section - Actions */}
+          <div className="flex items-center gap-3">
+            {/* Analysis status */}
+            <div className="flex items-center gap-4 mr-2">
+              <StatusIndicator
+                status={isAnalyzing ? 'running' : codeContext ? 'success' : 'idle'}
+                label={isAnalyzing ? 'Analyzing...' : codeContext ? 'Ready' : 'Waiting'}
+              />
+            </div>
+
+            {/* Action buttons */}
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  onClick={runCode}
+                  disabled={isRunning || getExecutionType(language) === 'none'}
+                  size="sm"
+                  className="gap-2 bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-500/20 hover:shadow-emerald-500/30 transition-all duration-300 btn-glow"
+                >
+                  {isRunning ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Play className="h-4 w-4" />
+                  )}
+                  {isRunning ? 'Running' : 'Run'}
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>Execute code {canRunClientSide(language) ? 'in browser' : 'on server'}</p>
+              </TooltipContent>
+            </Tooltip>
+
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  onClick={getCodeReview}
+                  disabled={isReviewing || isAnalyzing || !codeContext}
+                  size="sm"
+                  className="gap-2 bg-cyan-600 hover:bg-cyan-500 text-white shadow-lg shadow-cyan-500/20 hover:shadow-cyan-500/30 transition-all duration-300 btn-glow"
+                >
+                  {isReviewing ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Sparkles className="h-4 w-4" />
+                  )}
+                  Review
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>Get AI-powered code review</p>
+              </TooltipContent>
+            </Tooltip>
+
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  onClick={handleTranslate}
+                  disabled={isTranslating || isAnalyzing || !codeContext || language === targetLanguage}
+                  size="sm"
+                  className="gap-2 bg-purple-600 hover:bg-purple-500 text-white shadow-lg shadow-purple-500/20 hover:shadow-purple-500/30 transition-all duration-300 btn-glow"
+                >
+                  {isTranslating ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <ArrowRightLeft className="h-4 w-4" />
+                  )}
+                  Translate
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>Translate to {targetLanguages.find(l => l.value === targetLanguage)?.label}</p>
+              </TooltipContent>
+            </Tooltip>
+
+            <div className="h-6 w-px bg-border/50 mx-1" />
+
+            {/* Theme toggle */}
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => setTheme(resolvedTheme === 'dark' ? 'light' : 'dark')}
+                  className="hover:bg-accent/50"
+                >
+                  <Sun className="h-4 w-4 rotate-0 scale-100 transition-all dark:-rotate-90 dark:scale-0" />
+                  <Moon className="absolute h-4 w-4 rotate-90 scale-0 transition-all dark:rotate-0 dark:scale-100" />
+                  <span className="sr-only">Toggle theme</span>
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>Toggle theme</p>
+              </TooltipContent>
+            </Tooltip>
+          </div>
+        </motion.header>
+
+        {/* Main content */}
+        <div ref={containerRef} className="relative z-10 flex flex-1 min-h-0">
+          {/* Editor Panel */}
+          <motion.div
+            initial={{ opacity: 0, x: -20 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ duration: 0.5, delay: 0.1 }}
+            className="flex flex-col border-r border-border/50"
+            style={{ width: `${editorWidth}%` }}
+          >
+            {/* Editor header */}
+            <div className="flex items-center justify-between border-b border-border/50 glass-subtle px-4 py-2">
+              <div className="flex items-center gap-2">
+                <Code2 className="h-4 w-4 text-muted-foreground" />
+                <span className="text-sm font-medium text-muted-foreground">Editor</span>
+              </div>
+              <div className="flex items-center gap-2">
+                {code.length > 0 && (
+                  <span className="text-xs text-muted-foreground">
+                    {code.split('\n').length} lines
+                  </span>
                 )}
               </div>
-            ) : activeTab === "context" ? (
-              <CodeContextViewer
-                context={codeContext}
-                isAnalyzing={isAnalyzing}
-                error={analysisError}
-              />
-            ) : activeTab === "translate" ? (
-              <TranslationViewer
-                sourceCode={code}
-                sourceLanguage={language}
-                targetLanguage={targetLanguage}
-                translatedCode={translationResult?.translatedCode || null}
-                warnings={translationResult?.warnings || []}
-                metadata={translationResult?.metadata}
-                isLoading={isTranslating}
-                error={translationError}
-              />
-            ) : activeTab === "resources" ? (
-              <ResourceFetcher
-                codeContext={codeContext}
-                isAnalyzing={isAnalyzing}
-                sourceCode={code}
-                reviewResult={reviewResult}
-                onReviewUpdate={(review, metadata) => {
-                  setReviewResult(review);
-                  setReviewMetadata(metadata);
+            </div>
+
+            {/* Monaco Editor */}
+            <div className="flex-1 relative">
+              <Editor
+                height="100%"
+                language={language}
+                value={code}
+                onChange={(value) => setCode(value || "")}
+                theme={resolvedTheme === 'dark' ? "vs-dark" : "light"}
+                onMount={(editor, monaco) => {
+                  const supportedLanguages = [
+                    'javascript', 'typescript', 'python', 'cpp',
+                    'rust', 'go', 'php', 'java'
+                  ];
+
+                  supportedLanguages.forEach(lang => {
+                    monaco.languages.registerHoverProvider(lang, {
+                      provideHover: (model: any, position: any) => {
+                        const word = model.getWordAtPosition(position);
+                        if (!word) return null;
+
+                        const wordText = word.word;
+                        const currentLang = model.getLanguageId();
+                        const doc = getMDNDoc(wordText, currentLang);
+
+                        if (!doc) return null;
+
+                        return {
+                          range: new monaco.Range(
+                            position.lineNumber,
+                            word.startColumn,
+                            position.lineNumber,
+                            word.endColumn
+                          ),
+                          contents: [
+                            { value: `**${wordText}**` },
+                            { value: doc.description },
+                            { value: `[MDN Reference](${doc.mdn})` }
+                          ]
+                        };
+                      }
+                    });
+
+                    if (lang in LANGUAGE_CONFIG) {
+                      const config = LANGUAGE_CONFIG[lang];
+                      monaco.languages.registerCompletionItemProvider(lang, {
+                        provideCompletionItems: (model: any, position: any) => {
+                          const word = model.getWordUntilPosition(position);
+                          const range = {
+                            startLineNumber: position.lineNumber,
+                            endLineNumber: position.lineNumber,
+                            startColumn: word.startColumn,
+                            endColumn: word.endColumn
+                          };
+
+                          const suggestions: any[] = [];
+
+                          config.keywords.forEach(keyword => {
+                            const doc = getMDNDoc(keyword, lang);
+                            suggestions.push({
+                              label: keyword,
+                              kind: monaco.languages.CompletionItemKind.Keyword,
+                              insertText: keyword,
+                              documentation: doc ? {
+                                value: `${doc.description}\n\n[MDN Reference](${doc.mdn})`
+                              } : "Keyword",
+                              range: range
+                            });
+                          });
+
+                          config.builtins.forEach(builtin => {
+                            const doc = getMDNDoc(builtin, lang);
+                            suggestions.push({
+                              label: builtin,
+                              kind: monaco.languages.CompletionItemKind.Function,
+                              insertText: builtin,
+                              documentation: doc ? {
+                                value: `${doc.description}\n\n[MDN Reference](${doc.mdn})`
+                              } : "Built-in",
+                              range: range
+                            });
+                          });
+
+                          config.snippets.forEach(snippet => {
+                            suggestions.push({
+                              label: snippet.label,
+                              kind: monaco.languages.CompletionItemKind.Snippet,
+                              insertText: snippet.insertText,
+                              insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+                              documentation: snippet.documentation,
+                              range: range
+                            });
+                          });
+
+                          return { suggestions };
+                        }
+                      });
+                    }
+                  });
+                }}
+                options={{
+                  minimap: { enabled: false },
+                  fontSize: 14,
+                  fontFamily: "'JetBrains Mono', 'Fira Code', Consolas, monospace",
+                  fontLigatures: true,
+                  lineNumbers: "on",
+                  scrollBeyondLastLine: true,
+                  automaticLayout: true,
+                  tabSize: 2,
+                  wordWrap: "on",
+                  padding: { top: 16, bottom: 16 },
+                  smoothScrolling: true,
+                  cursorBlinking: "smooth",
+                  cursorSmoothCaretAnimation: "on",
+                  renderLineHighlight: "all",
+                  bracketPairColorization: { enabled: true },
+                  scrollbar: {
+                    vertical: "visible",
+                    useShadows: false,
+                    verticalScrollbarSize: 10,
+                  },
+                  overviewRulerLanes: 0,
                 }}
               />
-            ) : (
-              <CodeReviewViewer
-                review={reviewResult}
-                metadata={reviewMetadata}
-                isLoading={isReviewing}
-                error={reviewError}
-              />
-            )}
+            </div>
+          </motion.div>
+
+          {/* Resizable Divider */}
+          <div
+            className="group relative w-1 cursor-col-resize bg-border/30 hover:bg-primary/50 transition-colors duration-200"
+            onMouseDown={() => setIsDragging(true)}
+            role="separator"
+            aria-orientation="vertical"
+            tabIndex={0}
+          >
+            <div className="absolute inset-y-0 -left-1 -right-1" />
+            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-1 h-8 rounded-full bg-muted-foreground/30 group-hover:bg-primary/70 transition-colors" />
           </div>
+
+          {/* Right Panel */}
+          <motion.div
+            ref={rightPanelRef}
+            initial={{ opacity: 0, x: 20 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ duration: 0.5, delay: 0.2 }}
+            className="flex flex-col bg-background/50"
+            style={{ width: `${100 - editorWidth}%` }}
+          >
+            {/* Tab Headers */}
+            <div className="flex border-b border-border/50 glass-subtle overflow-x-auto">
+              {tabs.map((tab) => (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => setActiveTab(tab.id)}
+                  className={`
+                    flex items-center gap-2 px-4 py-3 text-sm font-medium transition-all duration-200
+                    border-b-2 whitespace-nowrap
+                    ${activeTab === tab.id
+                      ? `border-current ${tab.color} bg-accent/30`
+                      : 'border-transparent text-muted-foreground hover:text-foreground hover:bg-accent/20'
+                    }
+                  `}
+                >
+                  <tab.icon className="h-4 w-4" />
+                  {tab.label}
+                  {tab.loading && (
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                  )}
+                </button>
+              ))}
+            </div>
+
+            {/* Tab Content */}
+            <div className="flex-1 overflow-hidden">
+              <AnimatePresence mode="wait">
+                <motion.div
+                  key={activeTab}
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -10 }}
+                  transition={{ duration: 0.2 }}
+                  className="h-full"
+                >
+                  {activeTab === "output" ? (
+                    <div className="h-full overflow-auto p-6">
+                      {output ? (
+                        <pre className="font-mono text-sm text-foreground whitespace-pre-wrap leading-relaxed">
+                          {output}
+                        </pre>
+                      ) : (
+                        <div className="flex h-full items-center justify-center">
+                          <div className="text-center max-w-sm">
+                            <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-muted/50 border border-border/50">
+                              <Terminal className="h-8 w-8 text-muted-foreground" />
+                            </div>
+                            <h3 className="text-lg font-semibold text-foreground mb-2">
+                              Ready to Execute
+                            </h3>
+                            <p className="text-sm text-muted-foreground mb-4">
+                              Write some code and click Run to see the output here.
+                            </p>
+                            <Badge variant="secondary" className="gap-1.5">
+                              {canRunClientSide(language) ? (
+                                <>
+                                  <Zap className="h-3 w-3" />
+                                  Runs in browser
+                                </>
+                              ) : canRunOnBackend(language) ? (
+                                <>
+                                  <Server className="h-3 w-3" />
+                                  Runs on server
+                                </>
+                              ) : (
+                                <>
+                                  <Code2 className="h-3 w-3" />
+                                  Analysis only
+                                </>
+                              )}
+                            </Badge>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ) : activeTab === "context" ? (
+                    <CodeContextViewer
+                      context={codeContext}
+                      isAnalyzing={isAnalyzing}
+                      error={analysisError}
+                    />
+                  ) : activeTab === "translate" ? (
+                    <TranslationViewer
+                      sourceCode={code}
+                      sourceLanguage={language}
+                      targetLanguage={targetLanguage}
+                      translatedCode={translationResult?.translatedCode || null}
+                      warnings={translationResult?.warnings || []}
+                      metadata={translationResult?.metadata}
+                      isLoading={isTranslating}
+                      error={translationError}
+                    />
+                  ) : activeTab === "resources" ? (
+                    <ResourceFetcher
+                      codeContext={codeContext}
+                      isAnalyzing={isAnalyzing}
+                      sourceCode={code}
+                      reviewResult={reviewResult}
+                      onReviewUpdate={(review, metadata) => {
+                        setReviewResult(review);
+                        setReviewMetadata(metadata);
+                      }}
+                    />
+                  ) : (
+                    <CodeReviewViewer
+                      review={reviewResult}
+                      metadata={reviewMetadata}
+                      isLoading={isReviewing}
+                      error={reviewError}
+                    />
+                  )}
+                </motion.div>
+              </AnimatePresence>
+            </div>
+          </motion.div>
         </div>
       </div>
-    </div >
+    </TooltipProvider>
   );
 }
