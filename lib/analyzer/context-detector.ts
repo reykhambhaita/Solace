@@ -23,7 +23,7 @@ export interface CodeContext {
   analysisTime: number;
   confidence: ContextConfidence;
   llmContext: LLMContext;
-  reviewIR: ReviewIR; // NEW - stable IR for LLM
+  reviewIR: ReviewIR;
 }
 export type LLMRole = 'review-only' | 'refactor' | 'generate' | 'explain';
 export interface AnalysisOptions {

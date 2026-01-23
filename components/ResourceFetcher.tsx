@@ -24,11 +24,14 @@ interface ResourceFetcherProps {
   codeContext: any;
   isAnalyzing: boolean;
   sourceCode: string;
+  reviewResult?: any;
+  onReviewUpdate?: (review: any, metadata: any) => void;
 }
 
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3001';
 
-export default function ResourceFetcher({ codeContext, isAnalyzing, sourceCode }: ResourceFetcherProps) {
+export default function ResourceFetcher(props: ResourceFetcherProps) {
+  const { codeContext, isAnalyzing, sourceCode } = props;
   const [resources, setResources] = useState<Resource[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -53,6 +56,36 @@ export default function ResourceFetcher({ codeContext, isAnalyzing, sourceCode }
     setMetadata(null);
 
     try {
+      let currentReviewResponse = props.reviewResult;
+
+      // STEP 1: If no review available, trigger one automatically
+      if (!currentReviewResponse) {
+        console.log('[Resources] No review found, triggering auto-review...');
+        const reviewRes = await fetch(`${BACKEND_URL}/api/review`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            reviewIR: codeContext.reviewIR,
+            codeContext: codeContext,
+            fileContents: sourceCode
+          })
+        });
+
+        if (!reviewRes.ok) {
+          const errorData = await reviewRes.json().catch(() => ({}));
+          throw new Error(`Review Failed: ${errorData.error || reviewRes.statusText}`);
+        }
+
+        const reviewData = await reviewRes.json();
+        currentReviewResponse = reviewData.review;
+
+        // Notify parent if callback exists
+        if (props.onReviewUpdate) {
+          props.onReviewUpdate(reviewData.review, reviewData.metadata);
+        }
+      }
+
+      // STEP 2: Fetch resources with reviewResponse
       const response = await fetch(`${BACKEND_URL}/api/resources`, {
         method: 'POST',
         headers: {
@@ -63,12 +96,13 @@ export default function ResourceFetcher({ codeContext, isAnalyzing, sourceCode }
           reviewIR: codeContext.reviewIR,
           sourceCode: sourceCode,
           userIntent: userIntent,
+          reviewResponse: currentReviewResponse // REQUIRED NOW
         }),
       });
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.error || `Server error: ${response.status}`);
+        throw new Error(errorData.error || `Resource Fetch Error: ${response.status}`);
       }
 
       const data = await response.json();

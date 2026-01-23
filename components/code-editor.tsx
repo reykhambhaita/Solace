@@ -681,6 +681,11 @@ export default function CodeEditor() {
                 codeContext={codeContext}
                 isAnalyzing={isAnalyzing}
                 sourceCode={code}
+                reviewResult={reviewResult}
+                onReviewUpdate={(review, metadata) => {
+                  setReviewResult(review);
+                  setReviewMetadata(metadata);
+                }}
               />
             ) : (
               <CodeReviewViewer

@@ -50,6 +50,8 @@ async function buildResourceReviewContext(codeContext, sourceCode, userIntent = 
   try {
     const language = codeContext.language.language;
     const intent = codeContext.llmContext.intent;
+    const detReasoning = codeContext.libraries.externalInteractions.determinismReasoning;
+    const sideEffects = codeContext.reviewIR.behavior.sideEffects;
 
     const systemPrompt = `You are a technical learning planner. Analyze code and output a CONSTRAINED learning strategy.
 
@@ -75,10 +77,13 @@ OUTPUT FORMAT (strict JSON):
 
     const userPrompt = `DETECTED CODE CONTEXT:
 Language: ${language}
-Paradigm: ${codeContext.paradigm.primary.paradigm}
+Paradigm: ${codeContext.paradigm.primary.paradigm} (Confidence: ${codeContext.paradigm.primary.confidence})
 Intent: ${intent.semanticDescription}
+Determinism: ${detReasoning.classification.class} (${detReasoning.classification.llmGuidance})
+Side Effects: ${sideEffects.purity} (${sideEffects.sideEffectTypes.join(', ') || 'none'})
 Frameworks: ${codeContext.libraries.frameworks.map(f => f.name).join(', ') || 'None'}
 Imports: ${codeContext.libraries.libraries.filter(l => !l.isStandardLib).slice(0, 5).map(l => l.name).join(', ') || 'None'}
+Metrics: ${codeContext.reviewIR.structure.functions} functions, ${codeContext.reviewIR.structure.classes} classes, ${codeContext.reviewIR.quality.controlFlowComplexity} complexity
 
 ${userIntent ? `USER GOAL: ${userIntent}` : ''}
 
@@ -393,21 +398,20 @@ function buildReviewPrompt(input) {
   const systemPrompt = `STRICT JSON OUTPUT MODE - DATA FILLING ONLY
 
 You must output ONLY a valid JSON object matching this exact schema.
-No explanations, no thinking, no extra text, no markdown code blocks.
+No explanations, no thinking, no extra text.
 
 REQUIRED JSON SCHEMA:
 {
-"complexity": "string - Describe time and space complexity using Big-O notation. Explicitly distinguish between worst-case and amortized complexity when applicable. Use full sentences and include both analyses if they differ. Minimum one complete sentence. NO ordinals, indexes, or section numbers.",
-  "purpose": "string - Full sentence describing whether code clearly expresses its purpose and if naming is semantically meaningful. Minimum one complete sentence. NO ordinals, indexes, or section numbers.",
-  "behavioral": "string - Full sentence analysis of behavioral correctness, race conditions, and edge case handling. Minimum one complete sentence. NO ordinals, indexes, or section numbers.",
+"complexity": "string - Describe time and space complexity using Big-O notation. Explicitly distinguish between worst-case and amortized complexity when applicable. Use full sentences and include both analyses if they differ. . NO ordinals, indexes, or section numbers.",
+  "purpose": "string - Describe whether code clearly expresses its purpose and if naming is semantically meaningful. . NO ordinals, indexes, or section numbers.",
+  "behavioral": "string - Full sentence analysis of behavioral correctness, race conditions, and edge case handling. . NO ordinals, indexes, or section numbers.",
   "risks": "string - Full sentence description of hidden risks including magic values, silent behaviors, state mutations, or error handling gaps. Use exactly 'No issues found.' if none exist. NO ordinals, indexes, or section numbers.",
   "edgeCases": "string - Full sentence description of edge cases and boundary conditions including input validation, null handling, and concurrency issues. Use exactly 'No issues found.' if none exist. NO ordinals, indexes, or section numbers.",
-  "summary": "string - Full sentence overall code quality assessment with critical issues and improvement suggestions. Minimum one complete sentence. NO ordinals, indexes, or section numbers."
+  "summary": "string - Full sentence overall code quality assessment with critical issues and improvement suggestions. . NO ordinals, indexes, or section numbers."
 }
 
 STRICTLY FORBIDDEN:
 - Ordinal numbers as content (e.g., "2.", "3.", "item 1", "section 2")
-- Section references or list indexes
 - Empty strings or whitespace-only values
 - Placeholder text or generic responses
 - Any text outside the JSON object
@@ -420,6 +424,9 @@ STRICTLY REQUIRED:
 - Use exactly "No issues found." when a category has no findings
 - Only output valid JSON matching the schema above
 - All content must be semantic and actionable, not structural references
+- When describing purpose, behavior, risks, or edge cases, you MUST explicitly reference at least one concrete language construct, API, or symbol present in the code when applicable.
+- If the code contains only trivial or standard library usage, you MUST explicitly name that usage (for example: console.log, print, fmt.Println).
+- Avoid abstract phrases unless tied to a concrete construct.
 
 Fill the JSON object based on the code analysis below.`;
 
@@ -527,8 +534,19 @@ function pruneTreeForLLM(reviewIR) {
 
 function parseReviewResponse(response) {
   try {
-    let jsonText = response.trim();
+    // Strip <think> blocks - common in Qwen/DeepSeek models
+    let jsonText = response.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+
+    // Remove markdown code blocks
     jsonText = jsonText.replace(/^```json?\s*\n?/i, '').replace(/\n?```\s*$/i, '');
+
+    // Robust JSON extraction: Find the first { and the last }
+    const firstBrace = jsonText.indexOf('{');
+    const lastBrace = jsonText.lastIndexOf('}');
+
+    if (firstBrace !== -1 && lastBrace !== -1) {
+      jsonText = jsonText.substring(firstBrace, lastBrace + 1);
+    }
 
     const parsed = JSON.parse(jsonText);
 

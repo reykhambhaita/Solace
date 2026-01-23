@@ -2,25 +2,62 @@
  * ARCHITECTURAL FIX: Deterministic anchor extraction
  * Guarantees concrete query seeds from code context
  */
-
-function extractAnchors(codeContext, reviewIR, sourceCode) {
+const { extractReviewAnchors } = require('./review-anchor-reducer');
+function extractAnchors(codeContext, sourceCode, reviewResponse) {
   const anchors = {
-    mandatory: [],      // Must produce at least 1 query
-    optional: [],       // Enhance coverage
+    mandatory: [],
+    optional: [],
     metadata: {}
   };
 
   const language = codeContext.language.language;
+  const reviewIR = codeContext.reviewIR;
 
-  // MANDATORY: Language-specific official docs
-  anchors.mandatory.push({
-    type: 'official-docs',
-    target: `${language} official documentation`,
-    reason: 'language-runtime',
-    weight: 1.0
-  });
+  // STEP 1: Extract review-specific anchors (CONCRETE SYMBOLS)
+  const reviewAnchors = extractReviewAnchors(reviewIR, codeContext, reviewResponse);
 
-  // MANDATORY: Frameworks (concrete, detected)
+  // SHORT-CIRCUIT: If trivial code detected
+  if (reviewAnchors.metadata.shortCircuit) {
+    console.log('[Anchors] Short-circuit activated:', reviewAnchors.metadata.reason);
+    anchors.mandatory = reviewAnchors.concrete.map(a => ({
+      type: 'official-docs',
+      target: a.context,
+      reason: a.source,
+      weight: a.weight
+    }));
+
+    anchors.metadata = {
+      totalAnchors: anchors.mandatory.length,
+      mandatoryCount: anchors.mandatory.length,
+      shortCircuit: true,
+      reviewQuality: reviewAnchors.metadata.reviewQuality
+    };
+
+    return anchors;
+  }
+
+  // STEP 2: Prioritize concrete symbols over generic docs
+  if (reviewAnchors.metadata.hasConcreteSymbols) {
+    reviewAnchors.concrete.forEach(anchor => {
+      anchors.mandatory.push({
+        type: anchor.type.includes('api') ? 'library-docs' : 'conceptual',
+        target: anchor.context,
+        reason: anchor.source,
+        weight: anchor.weight,
+        retrievalReady: anchor.retrievalReady
+      });
+    });
+  } else {
+    // Fallback to language-level docs only if no concrete symbols
+    anchors.mandatory.push({
+      type: 'official-docs',
+      target: `${language} official documentation`,
+      reason: 'language-runtime',
+      weight: 1.0
+    });
+  }
+
+  // STEP 3: Add framework anchors
   codeContext.libraries.frameworks.forEach(fw => {
     anchors.mandatory.push({
       type: 'framework-docs',
@@ -30,50 +67,34 @@ function extractAnchors(codeContext, reviewIR, sourceCode) {
     });
   });
 
-  // MANDATORY: Imported libraries (not stdlib)
-  codeContext.libraries.libraries
-    .filter(lib => !lib.isStandardLib)
-    .slice(0, 5)
-    .forEach(lib => {
-      anchors.mandatory.push({
-        type: 'library-docs',
-        target: `${lib.name} ${language} documentation`,
-        reason: `detected-import:${lib.name}`,
-        weight: 0.9
-      });
+  // STEP 4: Add conceptual anchors (from review) as OPTIONAL
+  reviewAnchors.conceptual.forEach(anchor => {
+    anchors.optional.push({
+      type: 'conceptual',
+      target: anchor.context,
+      reason: anchor.source,
+      weight: anchor.weight
     });
-
-  // MANDATORY: Primary paradigm
-  const paradigm = codeContext.paradigm.primary.paradigm;
-  anchors.mandatory.push({
-    type: 'conceptual',
-    target: `${language} ${paradigm} patterns`,
-    reason: `paradigm:${paradigm}`,
-    weight: 0.85
   });
 
-  // OPTIONAL: Error patterns (if detected)
-  if (reviewIR.quality.errorHandling === 'partial' || reviewIR.quality.errorHandling === 'none') {
+  // Existing optional anchors (error handling, side effects, etc.)
+  const execModel = codeContext.paradigm.executionModel;
+  if (execModel.primary === 'asynchronous' || execModel.asyncPatterns > 0) {
+    anchors.mandatory.push({
+      type: 'conceptual',
+      target: `${language} asynchronous programming guide`,
+      reason: 'async-detected',
+      weight: 0.9
+    });
+  }
+
+  const errorStrategy = codeContext.libraries.errorHandling;
+  if (!errorStrategy.hasErrorHandling || errorStrategy.approach === 'silent') {
     anchors.optional.push({
       type: 'troubleshooting',
       target: `${language} error handling best practices`,
       reason: 'error-handling-gap',
-      weight: 0.7
-    });
-  }
-
-  // OPTIONAL: Magic values (concrete)
-  if (reviewIR.elements.magicValues.length > 0) {
-    const uniqueRoles = [...new Set(reviewIR.elements.magicValues.map(mv => mv.role))];
-    uniqueRoles.slice(0, 3).forEach(role => {
-      if (role && role !== 'unknown') {
-        anchors.optional.push({
-          type: 'conceptual',
-          target: `${language} ${role} configuration`,
-          reason: `magic-value:${role}`,
-          weight: 0.65
-        });
-      }
+      weight: 0.75
     });
   }
 
@@ -81,16 +102,22 @@ function extractAnchors(codeContext, reviewIR, sourceCode) {
     totalAnchors: anchors.mandatory.length + anchors.optional.length,
     mandatoryCount: anchors.mandatory.length,
     detectedImports: codeContext.libraries.libraries.filter(l => !l.isStandardLib).length,
-    language
+    language,
+    determinismClass: codeContext.libraries.externalInteractions.determinismReasoning.classification.class,
+    hasConcreteSymbols: reviewAnchors.metadata.hasConcreteSymbols,
+    reviewQuality: reviewAnchors.metadata.reviewQuality
   };
 
   console.log('[Anchors] Extracted:', {
     mandatory: anchors.mandatory.length,
-    optional: anchors.optional.length
+    optional: anchors.optional.length,
+    concreteSymbols: reviewAnchors.metadata.hasConcreteSymbols,
+    reviewQuality: reviewAnchors.metadata.reviewQuality
   });
 
   return anchors;
 }
+
 
 
 /**
@@ -101,75 +128,108 @@ function extractAnchors(codeContext, reviewIR, sourceCode) {
 function buildBaselineQueries(anchors) {
   const queries = [];
 
-  // GUARANTEE: At least 1 query per mandatory anchor
+  // HARD LIMIT: Disable expansion if insufficient anchors
+  if (anchors.mandatory.length === 0) {
+    throw new Error('CRITICAL: No mandatory anchors extracted');
+  }
+
+  if (anchors.mandatory.length === 1 && !anchors.metadata.hasConcreteSymbols) {
+    console.warn('[Baseline] Single generic anchor - expansion disabled');
+    anchors.metadata.expansionDisabled = true;
+  }
+
+  // Build queries with explicit intent
   anchors.mandatory.forEach(anchor => {
+    const intent = classifyIntent(anchor);
     queries.push({
       primary: anchor.target,
-      intent: anchor.type,
+      intent: intent.type,
       weight: anchor.weight,
       source: 'baseline',
       reason: anchor.reason,
-      contentType: anchor.type === 'official-docs' ? 'docs' :
-        anchor.type === 'framework-docs' ? 'docs' :
-          anchor.type === 'library-docs' ? 'docs' : 'article'
+      contentType: intent.contentType,
+      searchEngine: intent.searchEngine // NEW: Explicit routing
     });
   });
 
-  // OPTIONAL: Add optional anchors if under limit
-  const remainingSlots = 15 - queries.length;
-  anchors.optional.slice(0, remainingSlots).forEach(anchor => {
+  anchors.optional.slice(0, 15 - queries.length).forEach(anchor => {
+    const intent = classifyIntent(anchor);
     queries.push({
       primary: anchor.target,
-      intent: anchor.type,
+      intent: intent.type,
       weight: anchor.weight,
       source: 'baseline',
       reason: anchor.reason,
-      contentType: 'article'
+      contentType: intent.contentType,
+      searchEngine: intent.searchEngine
     });
   });
 
   console.log('[Baseline] Generated', queries.length, 'guaranteed queries');
 
-  // HARD GUARANTEE
-  if (queries.length === 0) {
-    throw new Error('CRITICAL: Baseline query generation failed (0 queries)');
-  }
-
   return queries;
 }
+
+
+
+function classifyIntent(anchor) {
+  const intentMap = {
+    'official-docs': { type: 'documentation', contentType: 'docs', searchEngine: 'mdn' },
+    'framework-docs': { type: 'documentation', contentType: 'docs', searchEngine: 'tavily' },
+    'library-docs': { type: 'documentation', contentType: 'docs', searchEngine: 'tavily' },
+    'conceptual': { type: 'tutorial', contentType: 'article', searchEngine: 'tavily' },
+    'troubleshooting': { type: 'troubleshooting', contentType: 'article', searchEngine: 'stackoverflow' }
+  };
+
+  return intentMap[anchor.type] || { type: 'general', contentType: 'article', searchEngine: 'tavily' };
+}
+
+
 /**
  * ARCHITECTURAL FIX: LLM expansion is optional enhancement
  * Cannot fail the pipeline
  */
 
-async function expandQueries(baselineQueries, reviewContext, codeContext) {
+async function expandQueries(baselineQueries, reviewContext, codeContext, anchors) {
   const GROQ_API_KEY = process.env.GROQ_API_KEY;
+
+  // HARD DISABLE: If anchors metadata says expansion is disabled
+  if (anchors.metadata.expansionDisabled) {
+    console.log('[Expansion] Disabled (insufficient concrete anchors)');
+    return baselineQueries;
+  }
 
   if (!GROQ_API_KEY) {
     console.log('[Expansion] Skipped (no API key)');
     return baselineQueries;
   }
 
+  // Only expand if we have concrete symbols
+  if (!anchors.metadata.hasConcreteSymbols) {
+    console.log('[Expansion] Skipped (no concrete symbols to refine)');
+    return baselineQueries;
+  }
+
   try {
     const language = codeContext.language.language;
 
-    const systemPrompt = `Generate 3-5 SUPPLEMENTARY search queries to enhance baseline coverage.
+    // MODIFIED PROMPT: Refine concrete symbols, don't invent
+    const systemPrompt = `Generate 2-3 REFINEMENT queries for existing concrete symbols.
 
-CONSTRAINTS:
-- Only expand on existing baseline queries
-- Max 5 new queries
-- Must align with learning goal: ${reviewContext.learningGoal}
-- Prioritize: ${JSON.stringify(reviewContext.contentPriority)}
+STRICT RULES:
+- ONLY refine symbols already in baseline queries
+- NO new APIs, libraries, or frameworks
+- Focus on: tutorials, troubleshooting, comparisons
+- Max 3 queries
 
-Return JSON array: [{"query": "...", "intent": "...", "weight": 0.6-0.8}]`;
+Baseline symbols: ${baselineQueries.map(q => q.primary).join(', ')}
+
+Return JSON: [{"query": "...", "intent": "...", "weight": 0.6-0.8}]`;
 
     const userPrompt = `BASELINE QUERIES:
 ${baselineQueries.map(q => `- ${q.primary}`).join('\n')}
 
-EXPANSION HINTS:
-${reviewContext.expansionHints?.join(', ') || 'none'}
-
-Generate 3-5 supplementary queries.`;
+Generate 2-3 refinement queries (tutorials, troubleshooting).`;
 
     const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
@@ -183,8 +243,8 @@ Generate 3-5 supplementary queries.`;
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userPrompt }
         ],
-        temperature: 0.5,
-        max_tokens: 500,
+        temperature: 0.3, // Lower temperature for less invention
+        max_tokens: 300,
       }),
     });
 
@@ -195,21 +255,22 @@ Generate 3-5 supplementary queries.`;
     const jsonMatch = content.match(/\[[\s\S]*\]/);
     const expansions = jsonMatch ? JSON.parse(jsonMatch[0]) : [];
 
-    const expandedQueries = expansions.slice(0, 5).map(exp => ({
+    const expandedQueries = expansions.slice(0, 3).map(exp => ({
       primary: exp.query,
-      intent: exp.intent || 'general',
-      weight: exp.weight || 0.7,
+      intent: exp.intent || 'tutorial',
+      weight: exp.weight || 0.65,
       source: 'expansion',
-      reason: 'llm-enhancement',
-      contentType: 'article'
+      reason: 'llm-refinement',
+      contentType: 'article',
+      searchEngine: 'tavily'
     }));
 
-    console.log('[Expansion] Added', expandedQueries.length, 'enhancement queries');
+    console.log('[Expansion] Added', expandedQueries.length, 'refinement queries');
     return [...baselineQueries, ...expandedQueries];
 
   } catch (error) {
     console.error('[Expansion] Failed, using baseline only:', error.message);
-    return baselineQueries; // GUARANTEE: Never fails pipeline
+    return baselineQueries;
   }
 }
 /**

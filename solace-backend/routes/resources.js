@@ -403,9 +403,11 @@ Return ONLY JSON array of scores: [0.95, 0.87, ...]`;
  * Main endpoint with review-driven workflow
  */
 
+// Modify the /resources endpoint
+
 router.post('/resources', async (req, res) => {
   try {
-    const { codeContext, sourceCode, userIntent } = req.body;
+    const { codeContext, sourceCode, userIntent, reviewResponse } = req.body; // ADD reviewResponse
 
     if (!codeContext) {
       return res.status(400).json({
@@ -414,58 +416,101 @@ router.post('/resources', async (req, res) => {
       });
     }
 
-    console.log('[Resources] Starting review-driven resource fetch...');
-
-    // STEP 1: Generate enriched review context (REVIEW STEP)
-    const buildResourceReviewContext = req.app.locals.buildResourceReviewContext;
-    const reviewContext = await buildResourceReviewContext(codeContext, sourceCode, userIntent);
-
-    console.log('[Resources] Review context generated:', {
-      primaryConcepts: reviewContext.primaryConcepts?.length,
-      prerequisites: reviewContext.prerequisites?.length,
-      searchIntents: Object.keys(reviewContext.searchIntents || {})
-    });
-
-    // STEP 2: Build search queries from reviewed context (QUERY GENERATION)
-    const queries = await buildSearchQueries(reviewContext, codeContext, sourceCode);
-    console.log(`[Resources] Generated ${queries.length} search queries from review`);
-
-    // STEP 3: Fetch from all sources in parallel (RESOURCE FETCH)
-    const language = codeContext.language.language;
-
-    const fetchPromises = [];
-
-    // Existing sources (keep as-is)
-    queries.slice(0, 3).forEach(q => {
-      fetchPromises.push(fetchGitHub(q.primary));
-      fetchPromises.push(fetchStackOverflow(q.primary));
-    });
-
-    // NEW: Tavily batch search (all queries in one call)
-    const tavilyQueries = queries.slice(0, 10); // Use more queries for batch
-    fetchPromises.push(fetchTavilyByIntent(tavilyQueries));
-
-    // NEW: MDN documentation (for web languages)
-    if (['typescript', 'javascript'].includes(language)) {
-      queries.filter(q => q.type === 'documentation').slice(0, 3).forEach(q => {
-        fetchPromises.push(fetchMDN(q.primary, language));
+    // VALIDATION: Require reviewResponse for proper anchor extraction
+    if (!reviewResponse) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing reviewResponse - cannot extract concrete anchors'
       });
     }
 
-    const allResources = await Promise.all(fetchPromises);
+    console.log('[Resources] Starting review-driven resource fetch...');
 
-    // Flatten and deduplicate
+    // STEP 1: Extract anchors with review context
+    const { extractAnchors, buildBaselineQueries, expandQueries } = require('./resource-pipeline');
+    const anchors = extractAnchors(codeContext, sourceCode, reviewResponse);
+
+    // SHORT-CIRCUIT: Return minimal results for trivial code
+    if (anchors.metadata.shortCircuit) {
+      console.log('[Resources] Short-circuit: returning minimal results');
+      return res.json({
+        success: true,
+        resources: [],
+        metadata: {
+          shortCircuit: true,
+          reason: anchors.metadata.reason,
+          message: 'Code is too simple for resource recommendations'
+        }
+      });
+    }
+
+    // STEP 2: Build baseline queries
+    const baselineQueries = buildBaselineQueries(anchors);
+
+    // STEP 3: Build review context (for expansion only)
+    const buildResourceReviewContext = req.app.locals.buildResourceReviewContext;
+    const reviewContext = await buildResourceReviewContext(codeContext, sourceCode, userIntent);
+
+    // STEP 4: Expand queries (with hard disable check)
+    const allQueries = await expandQueries(baselineQueries, reviewContext, codeContext, anchors);
+
+    console.log(`[Resources] Generated ${allQueries.length} queries`, {
+      baseline: baselineQueries.length,
+      expansion: allQueries.length - baselineQueries.length,
+      expansionDisabled: anchors.metadata.expansionDisabled
+    });
+
+    // STEP 5: Route queries to appropriate search engines
+    const fetchPromises = [];
+    const mdnQueries = allQueries.filter(q => q.searchEngine === 'mdn');
+    const tavilyQueries = allQueries.filter(q => q.searchEngine === 'tavily');
+    const stackOverflowQueries = allQueries.filter(q => q.searchEngine === 'stackoverflow');
+
+    // MDN (JavaScript/TypeScript official docs)
+    if (mdnQueries.length > 0) {
+      console.log(`[Resources] Routing ${mdnQueries.length} queries to MDN`);
+      mdnQueries.slice(0, 3).forEach(q => {
+        fetchPromises.push(fetchMDN(q.primary, codeContext.language.language));
+      });
+    }
+
+    // Tavily (general web search)
+    if (tavilyQueries.length > 0) {
+      console.log(`[Resources] Routing ${tavilyQueries.length} queries to Tavily`);
+      fetchPromises.push(fetchTavilyByIntent(tavilyQueries.slice(0, 10)));
+    }
+
+    // Stack Overflow (troubleshooting)
+    if (stackOverflowQueries.length > 0) {
+      console.log(`[Resources] Routing ${stackOverflowQueries.length} queries to Stack Overflow`);
+      stackOverflowQueries.slice(0, 3).forEach(q => {
+        fetchPromises.push(fetchStackOverflow(q.primary));
+      });
+    }
+
+    // GitHub (top 3 queries only)
+    allQueries.slice(0, 3).forEach(q => {
+      fetchPromises.push(fetchGitHub(q.primary));
+    });
+
+    const allResources = await Promise.all(fetchPromises);
     const flatResources = allResources.flat();
+
+    // Deduplicate
     const uniqueResources = Array.from(
       new Map(flatResources.map(r => [r.url, r])).values()
     );
 
     console.log(`[Resources] Fetched ${uniqueResources.length} unique resources`);
 
-    // STEP 4: Rank with LLM (using review context)
-    const rankedResources = await rankResourcesWithLLM(uniqueResources, codeContext, queries, reviewContext);
+    // STEP 6: Prune before ranking
+    const { pruneForRanking } = require('./resource-pipeline');
+    const prunedResources = pruneForRanking(uniqueResources, 15);
 
-    // Sort by relevance and take top 25
+    // STEP 7: Rank with LLM
+    const rankedResources = await rankResourcesWithLLM(prunedResources, reviewContext);
+
+    // Sort and take top 25
     const topResources = rankedResources
       .sort((a, b) => b.relevanceScore - a.relevanceScore)
       .slice(0, 25);
@@ -478,27 +523,38 @@ router.post('/resources', async (req, res) => {
       metadata: {
         totalFetched: uniqueResources.length,
         totalReturned: topResources.length,
-        learningGoal: reviewContext.learningGoal,
         pipeline: {
-          baselineQueries: queries.filter(q => q.source === 'baseline').length,
-          expandedQueries: queries.filter(q => q.source === 'expansion').length,
-          resourcesRanked: uniqueResources.length,
-          resourcesReturned: topResources.length
+          anchorCount: anchors.metadata.totalAnchors,
+          hasConcreteSymbols: anchors.metadata.hasConcreteSymbols,
+          reviewQuality: anchors.metadata.reviewQuality,
+          baselineQueries: baselineQueries.length,
+          expandedQueries: allQueries.length - baselineQueries.length,
+          expansionDisabled: anchors.metadata.expansionDisabled,
+          resourcesPruned: uniqueResources.length - prunedResources.length,
+          resourcesRanked: prunedResources.length
         },
-        queries: queries.map(q => q.primary),
-        reviewContext: {
-          primaryConcepts: reviewContext.primaryConcepts,
-          learningPath: reviewContext.learningPath
+        routing: {
+          mdn: mdnQueries.length,
+          tavily: tavilyQueries.length,
+          stackoverflow: stackOverflowQueries.length
         },
+        queries: allQueries.map(q => ({ query: q.primary, engine: q.searchEngine })),
         timestamp: new Date().toISOString()
       }
     });
 
   } catch (error) {
     console.error('Resources endpoint error:', error);
+
+    // EXPLICIT FALLBACK
     res.status(500).json({
       success: false,
-      error: error.message || 'Failed to fetch resources'
+      error: error.message || 'Failed to fetch resources',
+      fallback: true,
+      metadata: {
+        errorType: error.name,
+        timestamp: new Date().toISOString()
+      }
     });
   }
 });

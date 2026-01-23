@@ -191,9 +191,9 @@ export function CodeReviewViewer({ review, metadata, isLoading, error }: CodeRev
                   <div key={section.key} className="border-l-2 border-cyan-500/50 pl-4">
                     <div className="flex items-center gap-2 mb-2">
                       <span className="text-lg">{section.icon}</span>
-                      <h4 className="text-sm font-semibold text-zinc-200">{section.label}</h4>
+                      <h4 className="text-sm font-semibold text-black">{section.label}</h4>
                     </div>
-                    <p className="text-sm text-zinc-300 leading-relaxed">
+                    <p className="text-sm text-black leading-relaxed">
                       {content}
                     </p>
                   </div>
