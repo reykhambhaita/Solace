@@ -42,5 +42,5 @@ next-env.d.ts
 
 
 solace-backend/node_modules
-components/ui/
+
 node_modules
