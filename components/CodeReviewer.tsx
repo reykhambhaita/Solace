@@ -49,9 +49,9 @@ export function CodeReviewViewer({ review, metadata, isLoading, error }: CodeRev
     return (
       <div className="flex h-full items-center justify-center p-8">
         <div className="text-center max-w-md">
-          <XCircle className="mx-auto h-12 w-12 text-red-500 mb-4" />
-          <p className="text-zinc-300 mb-2 font-medium">Review Failed</p>
-          <p className="text-sm text-zinc-500 mb-4">{error}</p>
+          <XCircle className="mx-auto h-12 w-12 text-destructive mb-4" />
+          <p className="text-foreground mb-2 font-medium">Review Failed</p>
+          <p className="text-sm text-muted-foreground mb-4">{error}</p>
           <p className="text-xs text-zinc-600">
             Make sure your GROQ_API_KEY is set in the backend environment
           </p>
@@ -64,8 +64,8 @@ export function CodeReviewViewer({ review, metadata, isLoading, error }: CodeRev
     return (
       <div className="flex h-full items-center justify-center p-8">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-cyan-500 mx-auto mb-4" />
-          <p className="text-zinc-300 mb-2">Analyzing code with Qwen 3-32B...</p>
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4" />
+          <p className="text-foreground mb-2">Analyzing code with Qwen 3-32B...</p>
           <p className="text-xs text-zinc-500">This may take 10-30 seconds</p>
         </div>
       </div>
@@ -145,17 +145,17 @@ export function CodeReviewViewer({ review, metadata, isLoading, error }: CodeRev
     <ScrollArea className="flex-1 w-full">
       <div className="p-6 space-y-4">
         {/* Review Header */}
-        <div className="flex items-center justify-between pb-4 border-b border-zinc-800">
+        <div className="flex items-center justify-between pb-4 border-b border-border">
           <div className="flex items-center gap-2">
-            <CheckCircle2 className="h-5 w-5 text-cyan-500" />
-            <span className="text-sm font-medium text-zinc-300">AI Code Review</span>
+            <CheckCircle2 className="h-5 w-5 text-primary" />
+            <span className="text-sm font-medium text-foreground">AI Code Review</span>
           </div>
           {metadata && (
             <div className="flex items-center gap-3">
-              <Badge variant="outline" className="text-xs border-zinc-700 text-zinc-400">
+              <Badge variant="outline" className="text-xs border-border text-muted-foreground">
                 Qwen 3-32B
               </Badge>
-              <div className="flex items-center gap-1.5 text-xs text-zinc-600">
+              <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
                 <Clock className="h-3 w-3" />
                 {metadata.tokensUsed.toLocaleString()} tokens
               </div>
@@ -164,13 +164,13 @@ export function CodeReviewViewer({ review, metadata, isLoading, error }: CodeRev
         </div>
 
         {/* Structured Review Output */}
-        <div className="rounded-lg border border-zinc-800 bg-zinc-900/50 p-6 space-y-4">
+        <div className="rounded-lg border border-border bg-muted/50 p-6 space-y-4">
           {(() => {
             try {
               // Strip <think> blocks and parse JSON
               const cleanedRaw = review.raw.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
               const jsonMatch = cleanedRaw.match(/\{[\s\S]*\}/);
-              if (!jsonMatch) return <pre className="text-sm text-zinc-300">{cleanedRaw}</pre>;
+              if (!jsonMatch) return <pre className="text-sm text-foreground">{cleanedRaw}</pre>;
 
               const parsed = JSON.parse(jsonMatch[0]);
 
@@ -202,30 +202,30 @@ export function CodeReviewViewer({ review, metadata, isLoading, error }: CodeRev
             } catch (error) {
               // Fallback to raw display if parsing fails
               const cleanedRaw = review.raw.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
-              return <pre className="text-sm text-zinc-300 whitespace-pre-wrap">{cleanedRaw}</pre>;
+              return <pre className="text-sm text-foreground whitespace-pre-wrap">{cleanedRaw}</pre>;
             }
           })()}
         </div>
 
         {/* Token Usage Details */}
         {metadata && (
-          <div className="pt-4 border-t border-zinc-800">
+          <div className="pt-4 border-t border-border">
             <div className="grid grid-cols-3 gap-3 text-center">
-              <div className="p-3 rounded bg-zinc-900/50 border border-zinc-800">
-                <div className="text-xs text-zinc-500">Prompt Tokens</div>
-                <div className="text-lg font-semibold text-zinc-300">
+              <div className="p-3 rounded bg-muted/50 border border-border">
+                <div className="text-xs text-muted-foreground">Prompt Tokens</div>
+                <div className="text-lg font-semibold text-foreground">
                   {metadata.promptTokens.toLocaleString()}
                 </div>
               </div>
-              <div className="p-3 rounded bg-zinc-900/50 border border-zinc-800">
-                <div className="text-xs text-zinc-500">Completion Tokens</div>
-                <div className="text-lg font-semibold text-zinc-300">
+              <div className="p-3 rounded bg-muted/50 border border-border">
+                <div className="text-xs text-muted-foreground">Completion Tokens</div>
+                <div className="text-lg font-semibold text-foreground">
                   {metadata.completionTokens.toLocaleString()}
                 </div>
               </div>
-              <div className="p-3 rounded bg-zinc-900/50 border border-zinc-800">
-                <div className="text-xs text-zinc-500">Total</div>
-                <div className="text-lg font-semibold text-cyan-400">
+              <div className="p-3 rounded bg-muted/50 border border-border">
+                <div className="text-xs text-muted-foreground">Total</div>
+                <div className="text-lg font-semibold text-primary">
                   {metadata.tokensUsed.toLocaleString()}
                 </div>
               </div>

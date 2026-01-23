@@ -2,98 +2,55 @@
 const express = require('express');
 const router = express.Router();
 
-/**
- * Build search queries from code context using deep intent analysis
- */
-async function buildSearchQueries(codeContext, sourceCode = '') {
+async function buildSearchQueries(reviewContext, codeContext, sourceCode = '') {
   const GROQ_API_KEY = process.env.GROQ_API_KEY;
 
   if (!GROQ_API_KEY) {
     console.warn('GROQ API key not configured, falling back to basic queries');
-    return buildFallbackQueries(codeContext);
+    return buildFallbackQueriesFromReview(reviewContext, codeContext);
   }
 
   try {
-    // Extract context information
     const language = codeContext.language.language;
-    const intent = codeContext.llmContext.intent;
-    const paradigm = codeContext.paradigm.primary.paradigm;
-    const patterns = codeContext.paradigm.patterns;
-    const frameworks = codeContext.libraries.frameworks.map(f => f.name).join(', ') || 'None';
-    const topLibraries = codeContext.libraries.libraries
-      .filter(lib => !lib.isStandardLib)
-      .slice(0, 5)
-      .map(lib => lib.name)
-      .join(', ') || 'None';
-    const errorHandling = codeContext.libraries.errorHandling.approach;
-    const executionModel = codeContext.paradigm.executionModel.primary;
+    const systemPrompt = `You are a search query optimization expert. Given an enriched learning context, generate 10-15 HIGHLY SPECIFIC search queries optimized for different content types.
 
-    const systemPrompt = `You are an expert code analyst who deeply understands what code actually DOES and WHY developers write it.
+QUERY TYPES TO GENERATE:
+1. Official Documentation (2-3 queries) - Target MDN, language docs, framework docs
+2. Tutorial/Guide (3-4 queries) - Target step-by-step learning content
+3. Conceptual Explanation (2-3 queries) - Target theory and understanding
+4. Video Content (2-3 queries) - Target YouTube, courses, screencasts
+5. Troubleshooting (2-3 queries) - Target Stack Overflow, issue solutions
 
-Your task: Analyze code context and generate 5-7 HIGHLY SPECIFIC search queries that target the ACTUAL INTENT and REAL-WORLD USE CASE.
-
-CRITICAL RULES:
-1. Understand WHAT the code does, not just its structure
-   - If code uses console.log() → "debugging and logging techniques"
-   - If code uses print() → "debugging output and print formatting"
-   - If code validates input → "input validation patterns and sanitization"
-   - If code parses JSON → "JSON parsing error handling and validation"
-
-2. Focus on SPECIFIC APIs, functions, and techniques being used
-   - Include exact function names (console.log, fetch, map, filter, etc.)
-   - Include specific patterns (async/await, promises, callbacks)
-   - Include actual use cases (debugging, testing, data transformation)
-
-3. Generate queries that find ACTIONABLE resources
-   - Tutorials for the specific technique
-   - Best practices for the actual use case
-   - Common pitfalls and solutions
-   - Real-world examples
-
-4. Be CONCRETE, not abstract
-   ❌ BAD: "TypeScript programming examples"
-   ✅ GOOD: "TypeScript console.log debugging best practices"
-
-   ❌ BAD: "Error handling patterns"
-   ✅ GOOD: "try-catch error handling in async/await functions"
+QUERY OPTIMIZATION RULES:
+- Use exact technical terms and official names
+- Include language/framework version context where relevant
+- Add keywords like "tutorial", "guide", "explained", "how to"
+- Use variations: "vs", "comparison", "best practices", "common mistakes"
+- Target different skill levels: "beginner", "advanced", "deep dive"
 
 Return ONLY a JSON array:
 [
   {
-    "query": "highly specific search query targeting actual code intent",
-    "type": "debugging|validation|parsing|transformation|testing|api-usage|pattern",
-    "weight": 0.7-1.0,
-    "reasoning": "brief explanation of why this query is relevant"
+    "query": "specific search query string",
+    "type": "documentation|tutorial|conceptual|video|troubleshooting",
+    "contentType": "article|video|docs",
+    "targetAudience": "beginner|intermediate|advanced",
+    "weight": 0.7-1.0
   }
 ]`;
 
-    // Truncate source code if too long (keep first 500 chars for analysis)
-    const codeSnippet = sourceCode.length > 500 ? sourceCode.substring(0, 500) + '...' : sourceCode;
-
-    const userPrompt = `Analyze this code context and ACTUAL SOURCE CODE to understand what the developer is doing:
+    const userPrompt = `Generate optimized search queries from this learning context:
 
 LANGUAGE: ${language}
-PARADIGM: ${paradigm}
-EXECUTION MODEL: ${executionModel}
+PRIMARY CONCEPTS: ${reviewContext.primaryConcepts?.join(', ')}
+PREREQUISITES: ${reviewContext.prerequisites?.join(', ')}
+RELATED TOPICS: ${reviewContext.relatedTopics?.join(', ')}
+ECOSYSTEM TERMS: ${reviewContext.ecosystemTerms?.join(', ')}
 
-FRAMEWORKS & LIBRARIES:
-- Frameworks: ${frameworks}
-- Libraries: ${topLibraries}
+SEARCH INTENTS:
+${JSON.stringify(reviewContext.searchIntents, null, 2)}
 
-${codeSnippet ? `ACTUAL CODE:
-\`\`\`${language}
-${codeSnippet}
-\`\`\`
-
-` : ''}TASK: Look at the ${codeSnippet ? 'ACTUAL CODE above' : 'code context'} and generate 5-7 search queries for THIS SPECIFIC CODE.
-
-Ask yourself:
-- What specific APIs/functions ${codeSnippet ? 'do I see in the code' : 'are being used'}? (console.log, fetch, map, etc.)
-- What is this code actually trying to do?
-- What problems might the developer face with these specific APIs?
-- What best practices exist for these exact functions?
-
-Return the JSON array of queries now.`;
+Generate 10-15 diverse, optimized search queries covering all content types and skill levels.`;
 
     const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
@@ -107,8 +64,8 @@ Return the JSON array of queries now.`;
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userPrompt }
         ],
-        temperature: 0.4, // Slightly higher for more creative, specific queries
-        max_tokens: 1000,
+        temperature: 0.6,
+        max_tokens: 1500,
       }),
     });
 
@@ -119,69 +76,67 @@ Return the JSON array of queries now.`;
     const data = await response.json();
     const content = data.choices[0]?.message?.content || '[]';
 
-    // Extract JSON array from response
     const jsonMatch = content.match(/\[[\s\S]*\]/);
     const queries = jsonMatch ? JSON.parse(jsonMatch[0]) : [];
 
-    // Transform to expected format
     const formattedQueries = queries.map(q => ({
       primary: q.query,
       weight: q.weight || 0.8,
       type: q.type || 'general',
-      reasoning: q.reasoning || ''
+      contentType: q.contentType || 'article',
+      targetAudience: q.targetAudience || 'intermediate'
     }));
 
-    console.log(`Generated ${formattedQueries.length} intent-based queries:`);
+    console.log(`[Query Builder] Generated ${formattedQueries.length} queries from review context`);
     formattedQueries.forEach((q, i) => {
-      console.log(`  ${i + 1}. [${q.type}] ${q.primary}`);
-      if (q.reasoning) console.log(`     → ${q.reasoning}`);
+      console.log(`  ${i + 1}. [${q.type}/${q.contentType}] ${q.primary}`);
     });
 
-    return formattedQueries.length > 0 ? formattedQueries : buildFallbackQueries(codeContext);
+    return formattedQueries.length > 0 ? formattedQueries : buildFallbackQueriesFromReview(reviewContext, codeContext);
 
   } catch (error) {
-    console.error('LLM query generation error:', error);
-    return buildFallbackQueries(codeContext);
+    console.error('Query generation error:', error);
+    return buildFallbackQueriesFromReview(reviewContext, codeContext);
   }
 }
 
+function buildFallbackQueriesFromReview(reviewContext, codeContext) {
+  const queries = [];
+  const language = codeContext.language.language;
+
+  // Generate from review context
+  reviewContext.primaryConcepts?.forEach(concept => {
+    queries.push({
+      primary: `${language} ${concept} tutorial`,
+      weight: 1.0,
+      type: 'tutorial',
+      contentType: 'article'
+    });
+  });
+
+  reviewContext.searchIntents?.documentation?.forEach(intent => {
+    queries.push({
+      primary: intent,
+      weight: 0.9,
+      type: 'documentation',
+      contentType: 'docs'
+    });
+  });
+
+  reviewContext.searchIntents?.videos?.forEach(intent => {
+    queries.push({
+      primary: intent,
+      weight: 0.85,
+      type: 'video',
+      contentType: 'video'
+    });
+  });
+
+  return queries.slice(0, 10);
+}
 /**
  * Fallback query generation when LLM is unavailable
  */
-function buildFallbackQueries(codeContext) {
-  const queries = [];
-  const language = codeContext.language.language;
-  const intent = codeContext.llmContext.intent;
-  const paradigm = codeContext.paradigm.primary.paradigm;
-
-  // Basic intent query
-  queries.push({
-    primary: `${language} ${intent.primary} ${intent.semanticDescription}`,
-    weight: 1.0,
-    type: 'intent'
-  });
-
-  // Paradigm query
-  if (paradigm && paradigm !== 'unknown') {
-    queries.push({
-      primary: `${language} ${paradigm} programming examples`,
-      weight: 0.8,
-      type: 'paradigm'
-    });
-  }
-
-  // Framework query
-  if (codeContext.libraries?.frameworks?.length > 0) {
-    const framework = codeContext.libraries.frameworks[0].name;
-    queries.push({
-      primary: `${framework} tutorial`,
-      weight: 0.9,
-      type: 'framework'
-    });
-  }
-
-  return queries;
-}
 
 /**
  * Fetch GitHub repositories
@@ -227,6 +182,118 @@ async function fetchGitHub(query) {
   }
 }
 
+
+async function fetchTavilyByIntent(queries) {
+  const TAVILY_API_KEY = process.env.TAVILY_API_KEY;
+  if (!TAVILY_API_KEY) return [];
+
+  // Group by intent
+  const intentGroups = {};
+  queries.forEach(q => {
+    const intent = q.intent || 'general';
+    if (!intentGroups[intent]) intentGroups[intent] = [];
+    intentGroups[intent].push(q);
+  });
+
+  const allResults = [];
+
+  // Fetch each intent group separately
+  for (const [intent, intentQueries] of Object.entries(intentGroups)) {
+    try {
+      const topQueries = intentQueries.slice(0, 3);
+      const combinedQuery = topQueries.map(q => q.primary).join(' OR ');
+
+      console.log(`[Tavily:${intent}] Fetching ${topQueries.length} queries`);
+
+      const response = await fetch('https://api.tavily.com/search', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          api_key: TAVILY_API_KEY,
+          query: combinedQuery,
+          search_depth: 'advanced',
+          max_results: Math.min(topQueries.length * 2, 10)
+        })
+      });
+
+      if (!response.ok) throw new Error(`Tavily error: ${response.status}`);
+
+      const data = await response.json();
+      const results = (data.results || []).map(result => {
+        let type = 'article';
+        const url = result.url.toLowerCase();
+
+        if (url.includes('youtube.com') || url.includes('vimeo.com')) {
+          type = 'video';
+        } else if (url.includes('docs.') || url.includes('developer.')) {
+          type = 'documentation';
+        } else if (url.includes('stackoverflow.com')) {
+          type = 'stackoverflow';
+        }
+
+        return {
+          type,
+          title: result.title,
+          url: result.url,
+          description: result.content?.substring(0, 200) || '',
+          intent, // Tag with intent
+          metadata: {
+            score: result.score || 0.5,
+            source: new URL(result.url).hostname
+          },
+          rawRelevance: result.score || 0.5
+        };
+      });
+
+      allResults.push(...results);
+      console.log(`[Tavily:${intent}] Got ${results.length} results`);
+
+    } catch (error) {
+      console.error(`[Tavily:${intent}] Error:`, error.message);
+    }
+  }
+
+  return allResults;
+}
+
+
+/**
+ * Fetch MDN documentation
+ */
+async function fetchMDN(query, language) {
+  try {
+    // MDN search endpoint
+    const searchUrl = `https://developer.mozilla.org/api/v1/search?q=${encodeURIComponent(query)}&locale=en-US`;
+
+    const response = await fetch(searchUrl, {
+      headers: {
+        'User-Agent': 'Solace-Learning-Platform/1.0'
+      }
+    });
+
+    if (!response.ok) {
+      throw new Error(`MDN API error: ${response.status}`);
+    }
+
+    const data = await response.json();
+
+    return (data.documents || []).slice(0, 3).map(doc => ({
+      type: 'documentation',
+      title: doc.title,
+      url: `https://developer.mozilla.org${doc.mdn_url}`,
+      description: doc.summary || 'Official MDN documentation',
+      metadata: {
+        category: 'mdn-docs',
+        popularity: doc.popularity || 0,
+        language: language
+      },
+      rawRelevance: 0.95 // MDN docs are highly relevant
+    }));
+  } catch (error) {
+    console.error('MDN fetch error:', error);
+    return [];
+  }
+}
 /**
  * Fetch Stack Overflow questions
  */
@@ -264,146 +331,34 @@ async function fetchStackOverflow(query) {
 /**
  * Fetch documentation via Google Custom Search
  */
-async function fetchDocumentation(query, language) {
-  const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY;
-  const GOOGLE_CSE_ID = process.env.GOOGLE_CSE_ID;
-  if (!GOOGLE_API_KEY || !GOOGLE_CSE_ID) {
-    console.warn('Google API credentials not configured (GOOGLE_API_KEY or GOOGLE_CSE_ID missing)');
-    return [];
-  }
-
-  try {
-    // Add documentation-specific terms
-    const docQuery = `${query} ${language} documentation tutorial guide`;
-
-    const response = await fetch(
-      `https://www.googleapis.com/customsearch/v1?key=${GOOGLE_API_KEY}&cx=${GOOGLE_CSE_ID}&q=${encodeURIComponent(docQuery)}&num=5`
-    );
-
-    if (!response.ok) {
-      throw new Error(`Google API error: ${response.status}`);
-    }
-
-    const data = await response.json();
-
-    if (!data.items) return [];
-
-    return data.items
-      .filter(item => {
-        const url = item.link.toLowerCase();
-        // Filter for known documentation sites
-        return url.includes('docs.') ||
-          url.includes('documentation') ||
-          url.includes('.readthedocs.') ||
-          url.includes('developer.mozilla.org') ||
-          url.includes('github.com') && url.includes('/wiki');
-      })
-      .map(item => ({
-        type: 'documentation',
-        title: item.title,
-        url: item.link,
-        description: item.snippet || 'No description available',
-        metadata: {},
-        rawRelevance: 0
-      }));
-  } catch (error) {
-    console.error('Documentation fetch error:', error);
-    return [];
-  }
-}
-
 /**
- * Fetch YouTube videos
+ * ARCHITECTURAL FIX: Ranking is best-effort enhancement
+ * Uses pre-pruned, bounded payload
  */
-async function fetchYouTube(query) {
-  const YOUTUBE_API_KEY = process.env.YOUTUBE_API_KEY;
-  if (!YOUTUBE_API_KEY) {
-    console.warn('YouTube API key not configured (YOUTUBE_API_KEY missing)');
-    return [];
-  }
 
-  try {
-    const response = await fetch(
-      `https://www.googleapis.com/youtube/v3/search?key=${YOUTUBE_API_KEY}&q=${encodeURIComponent(query)}&type=video&part=snippet&maxResults=5&order=relevance`
-    );
-
-    if (!response.ok) {
-      throw new Error(`YouTube API error: ${response.status}`);
-    }
-
-    const data = await response.json();
-
-    if (!data.items) return [];
-
-    return data.items.map(item => ({
-      type: 'video',
-      title: item.snippet.title,
-      url: `https://www.youtube.com/watch?v=${item.videoId.videoId}`,
-      description: item.snippet.description || 'No description available',
-      metadata: {},
-      rawRelevance: 0
-    }));
-  } catch (error) {
-    console.error('YouTube fetch error:', error);
-    return [];
-  }
-}
-
-/**
- * Use LLM to rank resources by relevance
- */
-async function rankResourcesWithLLM(resources, codeContext, queries) {
+async function rankResourcesWithLLM(resources, reviewContext) {
   const GROQ_API_KEY = process.env.GROQ_API_KEY;
-  if (!GROQ_API_KEY) {
-    console.warn('GROQ API key not configured (GROQ_API_KEY missing), using basic scoring');
-    return resources.map((r, i) => ({ ...r, relevanceScore: 0.5 - (i * 0.02) }));
+
+  // GUARANTEE: Return unranked on any failure
+  if (!GROQ_API_KEY || resources.length === 0) {
+    console.log('[Ranking] Skipped, using pre-ranking order');
+    return resources.map((r, i) => ({
+      ...r,
+      relevanceScore: 0.9 - (i * 0.05),
+      ranked: false
+    }));
   }
 
   try {
-    // Extract context information
-    const language = codeContext.language.language;
-    const intent = codeContext.llmContext.intent;
-    const paradigm = codeContext.paradigm.primary.paradigm;
-    const patterns = codeContext.paradigm.patterns;
-    const executionModel = codeContext.paradigm.executionModel.primary;
-    const isDeterministic = codeContext.libraries.externalInteractions.isDeterministic;
-    const frameworks = codeContext.libraries.frameworks.map(f => f.name).join(', ') || 'None';
-    const topLibraries = codeContext.libraries.libraries
-      .filter(lib => !lib.isStandardLib)
-      .slice(0, 3)
-      .map(lib => lib.name)
-      .join(', ') || 'None';
+    const systemPrompt = `Score ${resources.length} resources (0.0-1.0) for learning goal: "${reviewContext.learningGoal}"
 
-    const systemPrompt = `You are an expert at evaluating learning resources for programmers.
-Given code context and a list of resources, score each resource's relevance on a scale of 0.0 to 1.0.
+Priority: ${JSON.stringify(reviewContext.contentPriority)}
 
-Code Context:
-- Language: ${language}
-- Intent: ${intent.semanticDescription}
-- Paradigm: ${paradigm}
-- Execution Model: ${executionModel}
-- Functions: ${patterns.functions}, Classes: ${patterns.classes}
-- Complexity Indicators: Loops: ${patterns.loops}, Mutations: ${patterns.mutations}
-- Deterministic: ${isDeterministic}
-- Frameworks: ${frameworks}
-- Key Libraries: ${topLibraries}
+Return ONLY JSON array of scores: [0.95, 0.87, ...]`;
 
-Search Queries Used:
-${queries.map(q => `- ${q.primary} (${q.type})`).join('\n')}
-
-Score each resource based on:
-1. Direct relevance to the code's intent
-2. Appropriate complexity level
-3. Language/framework match
-4. Resource quality (GitHub stars, Stack Overflow votes, etc.)
-5. Freshness and maintenance
-
-Return ONLY a JSON array of scores in the same order as the resources, no other text:
-[0.95, 0.87, 0.65, ...]`;
-
-    const userPrompt = `Resources to score:\n${resources.map((r, i) =>
-      `${i}. [${r.type}] ${r.title}\n   ${r.description}\n   ${JSON.stringify(r.metadata)}`
-    ).join('\n\n')}`;
+    const userPrompt = resources.map((r, i) =>
+      `${i}. [${r.type}] ${r.title}\n   ${r.description?.substring(0, 100)}`
+    ).join('\n\n');
 
     const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
@@ -418,54 +373,39 @@ Return ONLY a JSON array of scores in the same order as the resources, no other 
           { role: 'user', content: userPrompt }
         ],
         temperature: 0.1,
-        max_tokens: 500,
+        max_tokens: 300,
       }),
     });
 
-    if (!response.ok) {
-      throw new Error(`LLM API error: ${response.status}`);
-    }
+    if (!response.ok) throw new Error(`Ranking API error: ${response.status}`);
 
     const data = await response.json();
     const scoresText = data.choices[0]?.message?.content || '[]';
-
-    // Extract JSON array from response
     const jsonMatch = scoresText.match(/\[[\s\S]*\]/);
     const scores = jsonMatch ? JSON.parse(jsonMatch[0]) : [];
 
-    // Apply scores
-    return resources.map((resource, i) => ({
-      ...resource,
-      relevanceScore: scores[i] || 0.5
+    return resources.map((r, i) => ({
+      ...r,
+      relevanceScore: scores[i] || r.rawRelevance || 0.5,
+      ranked: true
     }));
 
   } catch (error) {
-    console.error('LLM ranking error:', error);
-    // Fallback: basic scoring based on metadata
-    return resources.map((r, i) => {
-      let score = 0.5;
-
-      // Boost based on metadata
-      if (r.metadata.stars > 1000) score += 0.15;
-      else if (r.metadata.stars > 100) score += 0.1;
-
-      if (r.metadata.votes > 10) score += 0.1;
-      if (r.metadata.accepted) score += 0.15;
-
-      // Slight penalty for position
-      score -= i * 0.02;
-
-      return { ...r, relevanceScore: Math.max(0, Math.min(1, score)) };
-    });
+    console.error('[Ranking] Failed, using pre-ranking:', error.message);
+    return resources.map((r, i) => ({
+      ...r,
+      relevanceScore: r.rawRelevance || (0.9 - i * 0.05),
+      ranked: false
+    }));
   }
 }
-
 /**
- * Main endpoint
+ * Main endpoint with review-driven workflow
  */
+
 router.post('/resources', async (req, res) => {
   try {
-    const { codeContext, sourceCode } = req.body;
+    const { codeContext, sourceCode, userIntent } = req.body;
 
     if (!codeContext) {
       return res.status(400).json({
@@ -474,16 +414,45 @@ router.post('/resources', async (req, res) => {
       });
     }
 
-    // Build search queries from code context using LLM
-    const queries = await buildSearchQueries(codeContext, sourceCode || '');
-    console.log('Generated queries:', queries.map(q => q.primary));
+    console.log('[Resources] Starting review-driven resource fetch...');
 
-    // Fetch from all sources in parallel
+    // STEP 1: Generate enriched review context (REVIEW STEP)
+    const buildResourceReviewContext = req.app.locals.buildResourceReviewContext;
+    const reviewContext = await buildResourceReviewContext(codeContext, sourceCode, userIntent);
+
+    console.log('[Resources] Review context generated:', {
+      primaryConcepts: reviewContext.primaryConcepts?.length,
+      prerequisites: reviewContext.prerequisites?.length,
+      searchIntents: Object.keys(reviewContext.searchIntents || {})
+    });
+
+    // STEP 2: Build search queries from reviewed context (QUERY GENERATION)
+    const queries = await buildSearchQueries(reviewContext, codeContext, sourceCode);
+    console.log(`[Resources] Generated ${queries.length} search queries from review`);
+
+    // STEP 3: Fetch from all sources in parallel (RESOURCE FETCH)
     const language = codeContext.language.language;
-    const allResources = await Promise.all([
-      ...queries.slice(0, 3).map(q => fetchGitHub(q.primary)),
-      ...queries.slice(0, 3).map(q => fetchStackOverflow(q.primary))
-    ]);
+
+    const fetchPromises = [];
+
+    // Existing sources (keep as-is)
+    queries.slice(0, 3).forEach(q => {
+      fetchPromises.push(fetchGitHub(q.primary));
+      fetchPromises.push(fetchStackOverflow(q.primary));
+    });
+
+    // NEW: Tavily batch search (all queries in one call)
+    const tavilyQueries = queries.slice(0, 10); // Use more queries for batch
+    fetchPromises.push(fetchTavilyByIntent(tavilyQueries));
+
+    // NEW: MDN documentation (for web languages)
+    if (['typescript', 'javascript'].includes(language)) {
+      queries.filter(q => q.type === 'documentation').slice(0, 3).forEach(q => {
+        fetchPromises.push(fetchMDN(q.primary, language));
+      });
+    }
+
+    const allResources = await Promise.all(fetchPromises);
 
     // Flatten and deduplicate
     const flatResources = allResources.flat();
@@ -491,20 +460,17 @@ router.post('/resources', async (req, res) => {
       new Map(flatResources.map(r => [r.url, r])).values()
     );
 
-    console.log(`Fetched ${uniqueResources.length} unique resources`);
+    console.log(`[Resources] Fetched ${uniqueResources.length} unique resources`);
 
-    // Rank with LLM
-    const rankedResources = await rankResourcesWithLLM(uniqueResources, codeContext, queries);
+    // STEP 4: Rank with LLM (using review context)
+    const rankedResources = await rankResourcesWithLLM(uniqueResources, codeContext, queries, reviewContext);
 
-    // Sort by relevance and take top 20
+    // Sort by relevance and take top 25
     const topResources = rankedResources
       .sort((a, b) => b.relevanceScore - a.relevanceScore)
-      .slice(0, 20);
+      .slice(0, 25);
 
-    console.log(`Returning ${topResources.length} ranked resources`);
-    topResources.forEach((resource, index) => {
-      console.log(`[Resource ${index + 1}] ${resource.title} - ${resource.url}`);
-    });
+    console.log(`[Resources] Returning ${topResources.length} ranked resources`);
 
     res.json({
       success: true,
@@ -512,7 +478,18 @@ router.post('/resources', async (req, res) => {
       metadata: {
         totalFetched: uniqueResources.length,
         totalReturned: topResources.length,
+        learningGoal: reviewContext.learningGoal,
+        pipeline: {
+          baselineQueries: queries.filter(q => q.source === 'baseline').length,
+          expandedQueries: queries.filter(q => q.source === 'expansion').length,
+          resourcesRanked: uniqueResources.length,
+          resourcesReturned: topResources.length
+        },
         queries: queries.map(q => q.primary),
+        reviewContext: {
+          primaryConcepts: reviewContext.primaryConcepts,
+          learningPath: reviewContext.learningPath
+        },
         timestamp: new Date().toISOString()
       }
     });

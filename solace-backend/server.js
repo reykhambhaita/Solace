@@ -1,5 +1,4 @@
 require('dotenv').config();
-const resourcesRouter = require('./routes/resources');
 
 const express = require('express');
 const cors = require('cors');
@@ -7,6 +6,7 @@ const { exec } = require('child_process');
 const fs = require('fs').promises;
 const { v4: uuidv4 } = require('uuid');
 const path = require('path');
+const resourcesRouter = require('./routes/resources');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -29,9 +29,6 @@ app.use((req, res, next) => {
   next();
 });
 
-// Resources API
-app.use('/api', resourcesRouter);
-
 // Health check endpoint
 app.get('/health', (req, res) => {
   res.json({
@@ -41,6 +38,113 @@ app.get('/health', (req, res) => {
     groqConfigured: !!GROQ_API_KEY
   });
 });
+
+
+async function buildResourceReviewContext(codeContext, sourceCode, userIntent = '') {
+  const GROQ_API_KEY = process.env.GROQ_API_KEY;
+
+  if (!GROQ_API_KEY) {
+    return buildBasicResourceContext(codeContext);
+  }
+
+  try {
+    const language = codeContext.language.language;
+    const intent = codeContext.llmContext.intent;
+
+    const systemPrompt = `You are a technical learning planner. Analyze code and output a CONSTRAINED learning strategy.
+
+CRITICAL RULES:
+1. Only reference APIs/constructs that ACTUALLY APPEAR in the code
+2. Prerequisites must be concrete dependencies, not general topics
+3. Learning path must align with detected paradigm and imports
+4. Do NOT invent frameworks, libraries, or concepts
+
+OUTPUT FORMAT (strict JSON):
+{
+  "learningGoal": "1-sentence specific goal based on code intent",
+  "detectedGaps": ["concrete missing knowledge item 1", "item 2"],
+  "skillLevel": "beginner|intermediate|advanced",
+  "contentPriority": {
+    "official-docs": 0-1,
+    "tutorials": 0-1,
+    "troubleshooting": 0-1,
+    "videos": 0-1
+  },
+  "expansionHints": ["optional enhancement 1", "optional enhancement 2"]
+}`;
+
+    const userPrompt = `DETECTED CODE CONTEXT:
+Language: ${language}
+Paradigm: ${codeContext.paradigm.primary.paradigm}
+Intent: ${intent.semanticDescription}
+Frameworks: ${codeContext.libraries.frameworks.map(f => f.name).join(', ') || 'None'}
+Imports: ${codeContext.libraries.libraries.filter(l => !l.isStandardLib).slice(0, 5).map(l => l.name).join(', ') || 'None'}
+
+${userIntent ? `USER GOAL: ${userIntent}` : ''}
+
+Generate learning strategy JSON.`;
+
+    const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${GROQ_API_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'qwen/qwen3-32b',
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt }
+        ],
+        temperature: 0.3,
+        max_tokens: 800,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Groq API error: ${response.status}`);
+    }
+
+    const data = await response.json();
+    const content = data.choices[0]?.message?.content || '{}';
+    const jsonMatch = content.match(/\{[\s\S]*\}/);
+    const reviewContext = jsonMatch ? JSON.parse(jsonMatch[0]) : buildBasicResourceContext(codeContext);
+
+    console.log('[Review] Generated constrained context');
+    return reviewContext;
+
+  } catch (error) {
+    console.error('Review context error:', error);
+    return buildBasicResourceContext(codeContext);
+  }
+}
+
+function buildBasicResourceContext(codeContext) {
+  return {
+    learningGoal: `Learn ${codeContext.language.language}`,
+    detectedGaps: [],
+    skillLevel: 'intermediate',
+    contentPriority: {
+      'official-docs': 1.0,
+      'tutorials': 0.8,
+      'troubleshooting': 0.5,
+      'videos': 0.3
+    },
+    expansionHints: []
+  };
+}
+
+// Export for use in resources.js
+app.locals.buildResourceReviewContext = buildResourceReviewContext;
+
+const { extractAnchors, buildBaselineQueries, expandQueries, pruneForRanking } = require('./routes/resource-pipeline');
+
+
+app.use('/api', resourcesRouter);
+
+// =============================================================================
+// CODE EXECUTION
+// =============================================================================
 
 // Code execution endpoint (existing)
 app.post('/api/execute', async (req, res) => {
@@ -67,7 +171,133 @@ app.post('/api/execute', async (req, res) => {
   }
 });
 
-// NEW: Code review endpoint using Groq API
+async function executeCode(code, language) {
+  const startTime = Date.now();
+  const executionId = uuidv4();
+
+  let extension = getFileExtension(language);
+  let filename = `code_${executionId}.${extension}`;
+
+  if (language === 'java') {
+    const classNameMatch = code.match(/(?:public\s+)?class\s+(\w+)/);
+    if (classNameMatch) {
+      filename = `${classNameMatch[1]}.java`;
+    } else {
+      return {
+        output: '',
+        error: 'Error: No valid class declaration found in Java code.\n\nMake sure your code has a class declaration like:\nclass MyClass { ... }\nor\npublic class MyClass { ... }',
+        exitCode: 1,
+        executionTime: '0ms'
+      };
+    }
+  }
+
+  const filepath = path.join('/tmp', filename);
+
+  try {
+    await fs.writeFile(filepath, code, 'utf8');
+    console.log(`Code written to: ${filepath}`);
+
+    const dockerCommand = buildDockerCommand(filepath, filename, language);
+    console.log(`Executing: ${dockerCommand}`);
+
+    const result = await runDockerCommand(dockerCommand);
+    const executionTime = Date.now() - startTime;
+
+    return {
+      output: result.stdout || '',
+      error: result.stderr || '',
+      exitCode: result.exitCode,
+      executionTime: `${executionTime}ms`
+    };
+
+  } finally {
+    try {
+      await fs.unlink(filepath);
+      console.log(`Cleaned up: ${filepath}`);
+    } catch (err) {
+      console.error(`Cleanup failed for ${filepath}:`, err.message);
+    }
+  }
+}
+
+function buildDockerCommand(hostPath, containerFilename, language) {
+  const runCommand = getRunCommand(language, containerFilename);
+
+  return `docker run --rm \
+    --memory="256m" \
+    --cpus="0.5" \
+    --network=none \
+    --read-only \
+    --tmpfs /tmp:rw,exec,nosuid,size=65536k \
+    -v "${hostPath}:/usercode/${containerFilename}:ro" \
+    solace-runner \
+    timeout 10 bash -c "${runCommand}"`;
+}
+
+function getRunCommand(language, filename) {
+  const commands = {
+    'javascript': `node /usercode/${filename}`,
+    'python': `python3 /usercode/${filename}`,
+    'java': `cd /tmp && cp /usercode/${filename} . && javac ${filename} && java ${filename.replace('.java', '')}`,
+    'go': `GOCACHE=/tmp/go-cache GOTMPDIR=/tmp go run /usercode/${filename}`,
+    'cpp': `g++ /usercode/${filename} -o /tmp/program && /tmp/program`,
+    'c': `gcc /usercode/${filename} -o /tmp/program -lm && /tmp/program`,
+    'ruby': `ruby /usercode/${filename}`,
+    'php': `php /usercode/${filename}`,
+  };
+
+  if (!commands[language]) {
+    throw new Error(`Language "${language}" is not supported`);
+  }
+
+  return commands[language];
+}
+
+function getFileExtension(language) {
+  const extensions = {
+    'javascript': 'js',
+    'python': 'py',
+    'java': 'java',
+    'go': 'go',
+    'cpp': 'cpp',
+    'c': 'c',
+    'ruby': 'rb',
+    'php': 'php',
+  };
+
+  return extensions[language] || 'txt';
+}
+
+function runDockerCommand(command) {
+  return new Promise((resolve) => {
+    exec(command, {
+      timeout: 15000,
+      maxBuffer: 1024 * 1024
+    }, (error, stdout, stderr) => {
+
+      if (error && error.killed) {
+        resolve({
+          stdout: stdout || '',
+          stderr: 'Execution timeout (10 seconds exceeded)',
+          exitCode: 124
+        });
+        return;
+      }
+
+      resolve({
+        stdout: stdout || '',
+        stderr: stderr || (error ? error.message : ''),
+        exitCode: error ? (error.code || 1) : 0
+      });
+    });
+  });
+}
+
+// =============================================================================
+// CODE REVIEW
+// =============================================================================
+
 app.post('/api/review', async (req, res) => {
   console.log('[Review] Request received');
 
@@ -156,6 +386,199 @@ app.post('/api/review', async (req, res) => {
   }
 });
 
+function buildReviewPrompt(input) {
+  const analysisContext = extractAnalysisContext(input.reviewIR);
+  const { reviewIR } = input;
+
+  const systemPrompt = `STRICT JSON OUTPUT MODE - DATA FILLING ONLY
+
+You must output ONLY a valid JSON object matching this exact schema.
+No explanations, no thinking, no extra text, no markdown code blocks.
+
+REQUIRED JSON SCHEMA:
+{
+"complexity": "string - Describe time and space complexity using Big-O notation. Explicitly distinguish between worst-case and amortized complexity when applicable. Use full sentences and include both analyses if they differ. Minimum one complete sentence. NO ordinals, indexes, or section numbers.",
+  "purpose": "string - Full sentence describing whether code clearly expresses its purpose and if naming is semantically meaningful. Minimum one complete sentence. NO ordinals, indexes, or section numbers.",
+  "behavioral": "string - Full sentence analysis of behavioral correctness, race conditions, and edge case handling. Minimum one complete sentence. NO ordinals, indexes, or section numbers.",
+  "risks": "string - Full sentence description of hidden risks including magic values, silent behaviors, state mutations, or error handling gaps. Use exactly 'No issues found.' if none exist. NO ordinals, indexes, or section numbers.",
+  "edgeCases": "string - Full sentence description of edge cases and boundary conditions including input validation, null handling, and concurrency issues. Use exactly 'No issues found.' if none exist. NO ordinals, indexes, or section numbers.",
+  "summary": "string - Full sentence overall code quality assessment with critical issues and improvement suggestions. Minimum one complete sentence. NO ordinals, indexes, or section numbers."
+}
+
+STRICTLY FORBIDDEN:
+- Ordinal numbers as content (e.g., "2.", "3.", "item 1", "section 2")
+- Section references or list indexes
+- Empty strings or whitespace-only values
+- Placeholder text or generic responses
+- Any text outside the JSON object
+- Extra keys not in the schema above
+- Markdown code blocks or formatting
+- Thinking tags or meta-commentary
+
+STRICTLY REQUIRED:
+- Each field must contain at least one complete, grammatically correct sentence
+- Use exactly "No issues found." when a category has no findings
+- Only output valid JSON matching the schema above
+- All content must be semantic and actionable, not structural references
+
+Fill the JSON object based on the code analysis below.`;
+
+  const userPrompt = `ANALYSIS CONTEXT (use this data to fill JSON fields):
+
+Determinism: ${analysisContext.determinism.value}
+Execution Model: ${analysisContext.executionModel}
+State Lifetime: ${analysisContext.stateLifetime}
+Side Effects: ${analysisContext.sideEffects.length > 0 ? analysisContext.sideEffects.join(', ') : 'none'}
+
+CODE METRICS:
+- Language: ${reviewIR.language}
+- Paradigm: ${reviewIR.structure.paradigm}
+- Lines: ${reviewIR.structure.linesOfCode}
+- Functions: ${reviewIR.structure.functions}
+- Classes: ${reviewIR.structure.classes}
+- Control Flow Complexity: ${reviewIR.quality.controlFlowComplexity}
+- Testability Score: ${reviewIR.quality.testability}/100
+- Error Handling: ${reviewIR.quality.errorHandling}
+- Mutability: ${reviewIR.state.mutability}%
+
+DETECTED ELEMENTS:
+- Decision Rules: ${reviewIR.elements.decisionRules.length}
+- Magic Values: ${reviewIR.elements.magicValues.length}
+- Silent Behaviors: ${reviewIR.elements.silentBehaviors.length}
+
+CODE:
+\`\`\`${reviewIR.language}
+${input.fileContents}
+\`\`\`
+
+Fill the JSON fields now. Output ONLY the JSON object, nothing else.`;
+
+  return {
+    system: systemPrompt,
+    user: userPrompt
+  };
+}
+
+function extractAnalysisContext(reviewIR) {
+  const classification = reviewIR.behavior.determinismReasons;
+
+  let valueDeterminism = 'deterministic';
+  if (classification.some(r => r.includes('random') || r.includes('time'))) {
+    valueDeterminism = 'weakly-deterministic';
+  } else if (!reviewIR.behavior.isDeterministic) {
+    valueDeterminism = 'value-nondeterministic';
+  }
+
+  let outputOrder = 'stable';
+  if (classification.some(r => r.includes('race') || r.includes('concurrent') || r.includes('async'))) {
+    outputOrder = 'unstable';
+  }
+
+  return {
+    determinism: {
+      value: valueDeterminism,
+      outputOrder,
+      classification: reviewIR.behavior.isDeterministic ? 'fully-deterministic' : 'nondeterministic',
+      confidence: 0.85,
+    },
+    stateLifetime: reviewIR.state.lifetime,
+    executionModel: reviewIR.behavior.executionModel,
+    sideEffects: reviewIR.behavior.sideEffects === 'none' ? [] : [reviewIR.behavior.sideEffects],
+    externalInteractions: reviewIR.behavior.externalInteractions,
+  };
+}
+
+function pruneTreeForLLM(reviewIR) {
+  const sections = [];
+
+  sections.push('=== CODE STRUCTURE ===');
+  sections.push(`Language: ${reviewIR.language}`);
+  sections.push(`Type: ${reviewIR.codeType}`);
+  sections.push(`Paradigm: ${reviewIR.structure.paradigm}`);
+  sections.push(`Functions: ${reviewIR.structure.functions}, Classes: ${reviewIR.structure.classes}`);
+  sections.push(`Lines: ${reviewIR.structure.linesOfCode}`);
+  sections.push('');
+
+  if (reviewIR.elements.decisionRules.length > 0) {
+    sections.push('=== DECISION POINTS ===');
+    reviewIR.elements.decisionRules.slice(0, 10).forEach((dr, idx) => {
+      sections.push(`${idx + 1}. Line ${dr.location}: ${dr.condition} → ${dr.outcome}`);
+    });
+    sections.push('');
+  }
+
+  if (reviewIR.elements.magicValues.length > 0) {
+    sections.push('=== LITERAL VALUES ===');
+    reviewIR.elements.magicValues.slice(0, 15).forEach((mv, idx) => {
+      sections.push(`${idx + 1}. Line ${mv.location}: ${mv.value} ${mv.role ? `[${mv.role}]` : ''}`);
+    });
+    sections.push('');
+  }
+
+  sections.push('=== BEHAVIORAL PROPERTIES ===');
+  sections.push(`Determinism: ${reviewIR.behavior.isDeterministic ? 'Yes' : 'No'}`);
+  sections.push(`Execution: ${reviewIR.behavior.executionModel}`);
+  sections.push(`Side Effects: ${reviewIR.behavior.sideEffects}`);
+  sections.push(`State Lifetime: ${reviewIR.state.lifetime}`);
+  sections.push(`Mutability: ${reviewIR.state.mutability}%`);
+
+  return sections.join('\n');
+}
+
+function parseReviewResponse(response) {
+  try {
+    let jsonText = response.trim();
+    jsonText = jsonText.replace(/^```json?\s*\n?/i, '').replace(/\n?```\s*$/i, '');
+
+    const parsed = JSON.parse(jsonText);
+
+    const requiredFields = ['complexity', 'purpose', 'behavioral', 'risks', 'edgeCases', 'summary'];
+    for (const field of requiredFields) {
+      if (!parsed[field] || typeof parsed[field] !== 'string') {
+        console.warn(`Missing or invalid field: ${field}`);
+        parsed[field] = 'Unable to parse this section.';
+      }
+
+      const trimmed = parsed[field].trim();
+      if (/^\s*\d+\.?\s*$/.test(trimmed) || /^(item|section|point)\s*\d+/i.test(trimmed)) {
+        console.warn(`Field ${field} contains ordinal reference: "${trimmed}"`);
+        parsed[field] = 'No issues found.';
+      }
+
+      if (trimmed.length < 10 && trimmed !== 'No issues found.') {
+        console.warn(`Field ${field} has insufficient content: "${trimmed}"`);
+        parsed[field] = 'No issues found.';
+      }
+    }
+
+    return {
+      complexity: parsed.complexity,
+      purpose: parsed.purpose,
+      behavioral: parsed.behavioral,
+      risks: parsed.risks,
+      edgeCases: parsed.edgeCases,
+      summary: parsed.summary,
+      raw: response
+    };
+  } catch (error) {
+    console.error('JSON parsing failed:', error.message);
+    console.error('Response was:', response.substring(0, 500));
+
+    return {
+      complexity: 'Unable to parse review response. Please try again.',
+      purpose: 'Unable to parse review response. Please try again.',
+      behavioral: 'Unable to parse review response. Please try again.',
+      risks: 'Unable to parse review response. Please try again.',
+      edgeCases: 'Unable to parse review response. Please try again.',
+      summary: 'Unable to parse review response. Please try again.',
+      raw: response
+    };
+  }
+}
+
+// =============================================================================
+// CODE TRANSLATION
+// =============================================================================
 
 app.post('/api/translate', async (req, res) => {
   console.log('[Translation] Request received');
@@ -219,20 +642,15 @@ app.post('/api/translate', async (req, res) => {
       throw new Error('Invalid response from Groq API');
     }
 
-    // Extract ONLY the code block content
     let content = data.choices[0].message.content;
-
-    // Remove <think> tags and their content (common in Qwen/DeepSeek)
     content = content.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
 
     let translatedCode = content;
 
-    // Try to extract from code blocks first
     const codeBlockMatch = content.match(/```(?:\w+)?\n([\s\S]*?)```/);
     if (codeBlockMatch && codeBlockMatch[1]) {
       translatedCode = codeBlockMatch[1].trim();
     } else {
-      // Fallback: strip backticks if no block structure found, but warn
       console.log('[Translation] No code block found, returning raw trimmed content');
       translatedCode = content.replace(/```/g, '').trim();
     }
@@ -265,7 +683,6 @@ app.post('/api/translate', async (req, res) => {
   }
 });
 
-// Helper function: Build translation prompt
 function buildTranslationPrompt({ sourceCode, sourceLanguage, targetLanguage, reviewIR }) {
   const adapters = {
     typescript: {
@@ -390,11 +807,9 @@ Return only the code block.`;
   return { system: systemPrompt, user: userPrompt };
 }
 
-// Helper: Get relevant patterns
 function getRelevantPatterns(reviewIR, sourceLanguage, targetLanguage) {
   const patterns = [];
 
-  // Async patterns
   if (reviewIR.behavior.executionModel.includes('async')) {
     if (targetLanguage === 'python') {
       patterns.push('ASYNC: async/await → Python async/await with asyncio');
@@ -407,7 +822,6 @@ function getRelevantPatterns(reviewIR, sourceLanguage, targetLanguage) {
     }
   }
 
-  // TypeScript to other languages
   if (sourceLanguage === 'typescript') {
     if (targetLanguage === 'python') {
       patterns.push('ARRAYS: .map() → list comprehension OR map()');
@@ -427,7 +841,6 @@ function getRelevantPatterns(reviewIR, sourceLanguage, targetLanguage) {
     }
   }
 
-  // Python to other languages
   if (sourceLanguage === 'python') {
     if (targetLanguage === 'typescript') {
       patterns.push('LIST COMP: [x for x in items] → items.map(x => x)');
@@ -444,7 +857,6 @@ function getRelevantPatterns(reviewIR, sourceLanguage, targetLanguage) {
     }
   }
 
-  // Java to other languages
   if (sourceLanguage === 'java') {
     if (targetLanguage === 'typescript') {
       patterns.push('STREAMS: stream().map() → .map()');
@@ -461,7 +873,6 @@ function getRelevantPatterns(reviewIR, sourceLanguage, targetLanguage) {
     }
   }
 
-  // Go to other languages
   if (sourceLanguage === 'go') {
     if (targetLanguage === 'typescript') {
       patterns.push('ERROR: if err != nil → try/catch');
@@ -478,7 +889,6 @@ function getRelevantPatterns(reviewIR, sourceLanguage, targetLanguage) {
     }
   }
 
-  // Rust to other languages
   if (sourceLanguage === 'rust') {
     if (targetLanguage === 'typescript') {
       patterns.push('RESULT: Result<T, E> → try/catch or nullable');
@@ -495,31 +905,26 @@ function getRelevantPatterns(reviewIR, sourceLanguage, targetLanguage) {
     }
   }
 
-  // C++ to other languages
   if (sourceLanguage === 'cpp') {
     patterns.push('MEMORY: shared_ptr/unique_ptr → GC or manual memory management');
     patterns.push('CONST: const correctness → may need explicit immutability');
   }
 
-  // C to other languages
   if (sourceLanguage === 'c') {
     patterns.push('MEMORY: malloc/free → GC or classes');
     patterns.push('STRUCTS: struct → class or object');
   }
 
-  // Ruby to other languages
   if (sourceLanguage === 'ruby') {
     patterns.push('BLOCKS: do |x| ... end → arrow function or lambda');
     patterns.push('SYMBOLS: :symbol → string or constant');
   }
 
-  // PHP to other languages
   if (sourceLanguage === 'php') {
     patterns.push('ARRAYS: Associative arrays → Map or Object');
     patterns.push('VARS: $variable → variable (no prefix)');
   }
 
-  // JavaScript to other languages
   if (sourceLanguage === 'javascript') {
     patterns.push('TYPES: Dynamic typing → Static types (infer generic/any)');
     patterns.push('PROTOTYPES: Prototype chain → Classes');
@@ -528,7 +933,6 @@ function getRelevantPatterns(reviewIR, sourceLanguage, targetLanguage) {
   return patterns.length > 0 ? `\nPATTERN EQUIVALENTS:\n${patterns.join('\n')}` : '';
 }
 
-// Helper: Extract warnings
 function extractTranslationWarnings(sourceLanguage, targetLanguage) {
   const warnings = {
     'typescript-python': [
@@ -611,19 +1015,14 @@ function extractTranslationWarnings(sourceLanguage, targetLanguage) {
       'Rust ownership system has no Go equivalent',
       'Rust Result/Option need conversion to Go error values and pointers'
     ],
-    // C++ Pairs
     'cpp-typescript': ['C++ raw pointers/references need conversion', 'RAII pattern has no direct TS equivalent'],
     'typescript-cpp': ['Garbage collection -> Manual memory management', 'Interfaces -> Abstract classes'],
-    // C Pairs
     'c-typescript': ['Manual memory management -> GC', 'Pointers -> References/Values'],
     'typescript-c': ['Objects/Classes -> Structs + Functions', 'Exceptions -> Error codes'],
-    // Ruby Pairs
     'ruby-typescript': ['Dynamic typing -> Static typing', 'Blocks -> Arrow functions'],
     'typescript-ruby': ['Static types lost', 'Interfaces -> Modules/Mixins'],
-    // PHP Pairs
     'php-typescript': ['Associative arrays -> Maps/Objects', 'PHP traits -> Mixins'],
     'typescript-php': ['Interfaces -> PHP Interfaces', 'generics are limited in PHP'],
-    // JavaScript Pairs
     'javascript-typescript': ['Inferring types from JSDoc or usage', 'Missing type safety'],
     'typescript-javascript': ['Type erasure', 'Decorators behavior might differ']
   };
@@ -631,7 +1030,6 @@ function extractTranslationWarnings(sourceLanguage, targetLanguage) {
   const key = `${sourceLanguage}-${targetLanguage}`;
   if (warnings[key]) return warnings[key];
 
-  // Dynamic fallback for combinations not explicitly listed
   const dynamicWarnings = [];
   const staticLangs = ['typescript', 'java', 'go', 'rust', 'cpp', 'c'];
   const dynamicLangs = ['python', 'ruby', 'php', 'javascript'];
@@ -650,346 +1048,6 @@ function extractTranslationWarnings(sourceLanguage, targetLanguage) {
   return dynamicWarnings;
 }
 
-
-
-
-// Helper function: Build review prompt
-function buildReviewPrompt(input) {
-  const analysisContext = extractAnalysisContext(input.reviewIR);
-  const { reviewIR } = input;
-
-  const systemPrompt = `STRICT JSON OUTPUT MODE - DATA FILLING ONLY
-
-You must output ONLY a valid JSON object matching this exact schema.
-No explanations, no thinking, no extra text, no markdown code blocks.
-
-REQUIRED JSON SCHEMA:
-{
-"complexity": "string - Describe time and space complexity using Big-O notation. Explicitly distinguish between worst-case and amortized complexity when applicable. Use full sentences and include both analyses if they differ. Minimum one complete sentence. NO ordinals, indexes, or section numbers.",
-  "purpose": "string - Full sentence describing whether code clearly expresses its purpose and if naming is semantically meaningful. Minimum one complete sentence. NO ordinals, indexes, or section numbers.",
-  "behavioral": "string - Full sentence analysis of behavioral correctness, race conditions, and edge case handling. Minimum one complete sentence. NO ordinals, indexes, or section numbers.",
-  "risks": "string - Full sentence description of hidden risks including magic values, silent behaviors, state mutations, or error handling gaps. Use exactly 'No issues found.' if none exist. NO ordinals, indexes, or section numbers.",
-  "edgeCases": "string - Full sentence description of edge cases and boundary conditions including input validation, null handling, and concurrency issues. Use exactly 'No issues found.' if none exist. NO ordinals, indexes, or section numbers.",
-  "summary": "string - Full sentence overall code quality assessment with critical issues and improvement suggestions. Minimum one complete sentence. NO ordinals, indexes, or section numbers."
-}
-
-STRICTLY FORBIDDEN:
-- Ordinal numbers as content (e.g., "2.", "3.", "item 1", "section 2")
-- Section references or list indexes
-- Empty strings or whitespace-only values
-- Placeholder text or generic responses
-- Any text outside the JSON object
-- Extra keys not in the schema above
-- Markdown code blocks or formatting
-- Thinking tags or meta-commentary
-
-STRICTLY REQUIRED:
-- Each field must contain at least one complete, grammatically correct sentence
-- Use exactly "No issues found." when a category has no findings
-- Only output valid JSON matching the schema above
-- All content must be semantic and actionable, not structural references
-
-Fill the JSON object based on the code analysis below.`;
-
-  const userPrompt = `ANALYSIS CONTEXT (use this data to fill JSON fields):
-
-Determinism: ${analysisContext.determinism.value}
-Execution Model: ${analysisContext.executionModel}
-State Lifetime: ${analysisContext.stateLifetime}
-Side Effects: ${analysisContext.sideEffects.length > 0 ? analysisContext.sideEffects.join(', ') : 'none'}
-
-CODE METRICS:
-- Language: ${reviewIR.language}
-- Paradigm: ${reviewIR.structure.paradigm}
-- Lines: ${reviewIR.structure.linesOfCode}
-- Functions: ${reviewIR.structure.functions}
-- Classes: ${reviewIR.structure.classes}
-- Control Flow Complexity: ${reviewIR.quality.controlFlowComplexity}
-- Testability Score: ${reviewIR.quality.testability}/100
-- Error Handling: ${reviewIR.quality.errorHandling}
-- Mutability: ${reviewIR.state.mutability}%
-
-DETECTED ELEMENTS:
-- Decision Rules: ${reviewIR.elements.decisionRules.length}
-- Magic Values: ${reviewIR.elements.magicValues.length}
-- Silent Behaviors: ${reviewIR.elements.silentBehaviors.length}
-
-CODE:
-\`\`\`${reviewIR.language}
-${input.fileContents}
-\`\`\`
-
-Fill the JSON fields now. Output ONLY the JSON object, nothing else.`;
-
-  return {
-    system: systemPrompt,
-    user: userPrompt
-  };
-}
-
-// Helper function: Extract analysis context
-function extractAnalysisContext(reviewIR) {
-  const classification = reviewIR.behavior.determinismReasons;
-
-  let valueDeterminism = 'deterministic';
-  if (classification.some(r => r.includes('random') || r.includes('time'))) {
-    valueDeterminism = 'weakly-deterministic';
-  } else if (!reviewIR.behavior.isDeterministic) {
-    valueDeterminism = 'value-nondeterministic';
-  }
-
-  let outputOrder = 'stable';
-  if (classification.some(r => r.includes('race') || r.includes('concurrent') || r.includes('async'))) {
-    outputOrder = 'unstable';
-  }
-
-  return {
-    determinism: {
-      value: valueDeterminism,
-      outputOrder,
-      classification: reviewIR.behavior.isDeterministic ? 'fully-deterministic' : 'nondeterministic',
-      confidence: 0.85,
-    },
-    stateLifetime: reviewIR.state.lifetime,
-    executionModel: reviewIR.behavior.executionModel,
-    sideEffects: reviewIR.behavior.sideEffects === 'none' ? [] : [reviewIR.behavior.sideEffects],
-    externalInteractions: reviewIR.behavior.externalInteractions,
-  };
-}
-
-// Helper function: Prune tree for LLM
-function pruneTreeForLLM(reviewIR) {
-  const sections = [];
-
-  sections.push('=== CODE STRUCTURE ===');
-  sections.push(`Language: ${reviewIR.language}`);
-  sections.push(`Type: ${reviewIR.codeType}`);
-  sections.push(`Paradigm: ${reviewIR.structure.paradigm}`);
-  sections.push(`Functions: ${reviewIR.structure.functions}, Classes: ${reviewIR.structure.classes}`);
-  sections.push(`Lines: ${reviewIR.structure.linesOfCode}`);
-  sections.push('');
-
-  if (reviewIR.elements.decisionRules.length > 0) {
-    sections.push('=== DECISION POINTS ===');
-    reviewIR.elements.decisionRules.slice(0, 10).forEach((dr, idx) => {
-      sections.push(`${idx + 1}. Line ${dr.location}: ${dr.condition} → ${dr.outcome}`);
-    });
-    sections.push('');
-  }
-
-  if (reviewIR.elements.magicValues.length > 0) {
-    sections.push('=== LITERAL VALUES ===');
-    reviewIR.elements.magicValues.slice(0, 15).forEach((mv, idx) => {
-      sections.push(`${idx + 1}. Line ${mv.location}: ${mv.value} ${mv.role ? `[${mv.role}]` : ''}`);
-    });
-    sections.push('');
-  }
-
-  sections.push('=== BEHAVIORAL PROPERTIES ===');
-  sections.push(`Determinism: ${reviewIR.behavior.isDeterministic ? 'Yes' : 'No'}`);
-  sections.push(`Execution: ${reviewIR.behavior.executionModel}`);
-  sections.push(`Side Effects: ${reviewIR.behavior.sideEffects}`);
-  sections.push(`State Lifetime: ${reviewIR.state.lifetime}`);
-  sections.push(`Mutability: ${reviewIR.state.mutability}%`);
-
-  return sections.join('\n');
-}
-
-// Helper function: Parse review response (strict JSON mode)
-function parseReviewResponse(response) {
-  try {
-    // Extract JSON from response (handle potential markdown code blocks)
-    let jsonText = response.trim();
-
-    // Remove markdown code blocks if present
-    jsonText = jsonText.replace(/^```json?\s*\n?/i, '').replace(/\n?```\s*$/i, '');
-
-    // Parse JSON
-    const parsed = JSON.parse(jsonText);
-
-    // Validate required fields
-    const requiredFields = ['complexity', 'purpose', 'behavioral', 'risks', 'edgeCases', 'summary'];
-    for (const field of requiredFields) {
-      if (!parsed[field] || typeof parsed[field] !== 'string') {
-        console.warn(`Missing or invalid field: ${field}`);
-        parsed[field] = 'Unable to parse this section.';
-      }
-
-      // Reject ordinal-only content (e.g., "2.", "3", "item 1")
-      const trimmed = parsed[field].trim();
-      if (/^\s*\d+\.?\s*$/.test(trimmed) || /^(item|section|point)\s*\d+/i.test(trimmed)) {
-        console.warn(`Field ${field} contains ordinal reference: "${trimmed}"`);
-        parsed[field] = 'No issues found.';
-      }
-
-      // Ensure minimum content (at least 10 characters for a meaningful sentence)
-      if (trimmed.length < 10 && trimmed !== 'No issues found.') {
-        console.warn(`Field ${field} has insufficient content: "${trimmed}"`);
-        parsed[field] = 'No issues found.';
-      }
-    }
-
-    return {
-      complexity: parsed.complexity,
-      purpose: parsed.purpose,
-      behavioral: parsed.behavioral,
-      risks: parsed.risks,
-      edgeCases: parsed.edgeCases,
-      summary: parsed.summary,
-      raw: response
-    };
-  } catch (error) {
-    console.error('JSON parsing failed:', error.message);
-    console.error('Response was:', response.substring(0, 500));
-
-    // Fallback to safe defaults
-    return {
-      complexity: 'Unable to parse review response. Please try again.',
-      purpose: 'Unable to parse review response. Please try again.',
-      behavioral: 'Unable to parse review response. Please try again.',
-      risks: 'Unable to parse review response. Please try again.',
-      edgeCases: 'Unable to parse review response. Please try again.',
-      summary: 'Unable to parse review response. Please try again.',
-      raw: response
-    };
-  }
-}
-
-
-
-
-
-
-
-
-
-
-
-
-// Existing code execution functions (unchanged)
-async function executeCode(code, language) {
-  const startTime = Date.now();
-  const executionId = uuidv4();
-
-  let extension = getFileExtension(language);
-  let filename = `code_${executionId}.${extension}`;
-
-  if (language === 'java') {
-    const classNameMatch = code.match(/(?:public\s+)?class\s+(\w+)/);
-    if (classNameMatch) {
-      filename = `${classNameMatch[1]}.java`;
-    } else {
-      return {
-        output: '',
-        error: 'Error: No valid class declaration found in Java code.\n\nMake sure your code has a class declaration like:\nclass MyClass { ... }\nor\npublic class MyClass { ... }',
-        exitCode: 1,
-        executionTime: '0ms'
-      };
-    }
-  }
-
-  const filepath = path.join('/tmp', filename);
-
-  try {
-    await fs.writeFile(filepath, code, 'utf8');
-    console.log(`Code written to: ${filepath}`);
-
-    const dockerCommand = buildDockerCommand(filepath, filename, language);
-    console.log(`Executing: ${dockerCommand}`);
-
-    const result = await runDockerCommand(dockerCommand);
-    const executionTime = Date.now() - startTime;
-
-    return {
-      output: result.stdout || '',
-      error: result.stderr || '',
-      exitCode: result.exitCode,
-      executionTime: `${executionTime}ms`
-    };
-
-  } finally {
-    try {
-      await fs.unlink(filepath);
-      console.log(`Cleaned up: ${filepath}`);
-    } catch (err) {
-      console.error(`Cleanup failed for ${filepath}:`, err.message);
-    }
-  }
-}
-
-function buildDockerCommand(hostPath, containerFilename, language) {
-  const runCommand = getRunCommand(language, containerFilename);
-
-  return `docker run --rm \
-    --memory="256m" \
-    --cpus="0.5" \
-    --network=none \
-    --read-only \
-    --tmpfs /tmp:rw,exec,nosuid,size=65536k \
-    -v "${hostPath}:/usercode/${containerFilename}:ro" \
-    solace-runner \
-    timeout 10 bash -c "${runCommand}"`;
-}
-
-function getRunCommand(language, filename) {
-  const commands = {
-    'javascript': `node /usercode/${filename}`,
-    'python': `python3 /usercode/${filename}`,
-    'java': `cd /tmp && cp /usercode/${filename} . && javac ${filename} && java ${filename.replace('.java', '')}`,
-    'go': `GOCACHE=/tmp/go-cache GOTMPDIR=/tmp go run /usercode/${filename}`,
-    'cpp': `g++ /usercode/${filename} -o /tmp/program && /tmp/program`,
-    'c': `gcc /usercode/${filename} -o /tmp/program -lm && /tmp/program`,
-    'ruby': `ruby /usercode/${filename}`,
-    'php': `php /usercode/${filename}`,
-  };
-
-  if (!commands[language]) {
-    throw new Error(`Language "${language}" is not supported`);
-  }
-
-  return commands[language];
-}
-
-function getFileExtension(language) {
-  const extensions = {
-    'javascript': 'js',
-    'python': 'py',
-    'java': 'java',
-    'go': 'go',
-    'cpp': 'cpp',
-    'c': 'c',
-    'ruby': 'rb',
-    'php': 'php',
-  };
-
-  return extensions[language] || 'txt';
-}
-
-function runDockerCommand(command) {
-  return new Promise((resolve) => {
-    exec(command, {
-      timeout: 15000,
-      maxBuffer: 1024 * 1024
-    }, (error, stdout, stderr) => {
-
-      if (error && error.killed) {
-        resolve({
-          stdout: stdout || '',
-          stderr: 'Execution timeout (10 seconds exceeded)',
-          exitCode: 124
-        });
-        return;
-      }
-
-      resolve({
-        stdout: stdout || '',
-        stderr: stderr || (error ? error.message : ''),
-        exitCode: error ? (error.code || 1) : 0
-      });
-    });
-  });
-}
-
 app.listen(PORT, '0.0.0.0', () => {
   console.log('=================================');
   console.log('Solace Backend Server Started');
@@ -1001,8 +1059,9 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log('  POST /api/execute');
   console.log('  POST /api/review');
   console.log('  POST /api/translate');
+  console.log('  POST /api/resources');
   console.log('=================================');
   if (!GROQ_API_KEY) {
-    console.warn('⚠️  Warning: Set GROQ_API_KEY environment variable to enable code review');
+    console.warn('⚠️  Warning: Set GROQ_API_KEY environment variable to enable AI features');
   }
 });

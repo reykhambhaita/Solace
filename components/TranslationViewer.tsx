@@ -112,7 +112,7 @@ export function TranslationViewer({
   return (
     <div className="flex flex-col h-full">
       {/* Compact Header with Translation Info */}
-      <div className="flex items-center justify-between px-6 py-3 border-b border-zinc-800 bg-[#0f0f0f]">
+      <div className="flex items-center justify-between px-6 py-3 border-b border-border bg-muted/40">
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-2">
             <Badge className="bg-blue-500/20 text-blue-400 border-blue-500/50 text-xs">
@@ -138,13 +138,13 @@ export function TranslationViewer({
         <div className="flex items-center gap-3">
           {validation && (
             <div className="flex items-center gap-2">
-              <span className="text-xs text-zinc-500">Quality:</span>
+              <span className="text-xs text-muted-foreground">Quality:</span>
               <div className="flex items-center gap-1">
                 <Progress
                   value={validation.score * 100}
                   className="h-2 w-16"
                 />
-                <span className="text-xs text-zinc-400 w-10 text-right">
+                <span className="text-xs text-muted-foreground w-10 text-right">
                   {Math.round(validation.score * 100)}%
                 </span>
               </div>
@@ -152,7 +152,7 @@ export function TranslationViewer({
           )}
 
           {metadata && (
-            <div className="flex items-center gap-2 text-xs text-zinc-600">
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
               <Clock className="h-3 w-3" />
               {metadata.tokensUsed.toLocaleString()} tokens
             </div>
@@ -162,7 +162,7 @@ export function TranslationViewer({
 
       {/* Validation Summary */}
       {validation && (
-        <div className="px-6 py-3 border-b border-zinc-800 bg-zinc-900/30">
+        <div className="px-6 py-3 border-b border-border bg-muted/30">
           <div className="grid grid-cols-3 gap-4 text-xs">
             {validation.critical.length > 0 && (
               <div className="flex items-center gap-2 text-red-400">
@@ -188,7 +188,7 @@ export function TranslationViewer({
 
       {/* Warnings Banner (if any) */}
       {warnings && warnings.length > 0 && (
-        <div className="px-6 py-2 border-b border-zinc-800 bg-yellow-500/5">
+        <div className="px-6 py-2 border-b border-border bg-yellow-500/5">
           <div className="flex items-start gap-2">
             <AlertCircle className="h-3 w-3 text-yellow-500 mt-0.5 shrink-0" />
             <div className="flex-1">
@@ -211,11 +211,11 @@ export function TranslationViewer({
           {/* Validation Details */}
           {validation && validation.comparisonReport && (
             <div className="space-y-4">
-              <h3 className="text-sm font-semibold text-zinc-300">Validation Report</h3>
+              <h3 className="text-sm font-semibold text-foreground">Validation Report</h3>
 
               {/* Structure */}
               <div className="space-y-2">
-                <h4 className="text-xs font-medium text-zinc-400">Structure</h4>
+                <h4 className="text-xs font-medium text-muted-foreground">Structure</h4>
                 <div className="grid grid-cols-3 gap-3">
                   <ValidationItem
                     label="Functions"
@@ -298,8 +298,8 @@ export function TranslationViewer({
 
           {/* Translated Code */}
           <div className="space-y-2">
-            <h3 className="text-sm font-semibold text-zinc-300">Translated Code</h3>
-            <div className="border border-zinc-800 rounded-lg overflow-hidden">
+            <h3 className="text-sm font-semibold text-foreground">Translated Code</h3>
+            <div className="border border-border rounded-lg overflow-hidden">
               <Editor
                 height="400px"
                 language={targetLanguage}
@@ -345,11 +345,11 @@ function ValidationItem({
 
   return (
     <div className={`p-2 rounded border ${isValid
-        ? 'bg-green-500/5 border-green-500/30'
-        : 'bg-red-500/5 border-red-500/30'
+      ? 'bg-green-500/5 border-green-500/30'
+      : 'bg-red-500/5 border-red-500/30'
       }`}>
       <div className="flex items-center justify-between mb-1">
-        <span className="text-xs text-zinc-400">{label}</span>
+        <span className="text-xs text-muted-foreground">{label}</span>
         {isValid ? (
           <CheckCircle2 className="h-3 w-3 text-green-500" />
         ) : (

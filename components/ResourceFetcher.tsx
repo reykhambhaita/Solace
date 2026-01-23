@@ -33,6 +33,8 @@ export default function ResourceFetcher({ codeContext, isAnalyzing, sourceCode }
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [activeFilter, setActiveFilter] = useState<'all' | 'github' | 'stackoverflow' | 'documentation' | 'video'>('all');
+  const [userIntent, setUserIntent] = useState('');
+  const [metadata, setMetadata] = useState<any>(null);
 
   const fetchResources = async () => {
     if (!codeContext) {
@@ -40,9 +42,15 @@ export default function ResourceFetcher({ codeContext, isAnalyzing, sourceCode }
       return;
     }
 
+    if (!codeContext.reviewIR) {
+      setError("Code analysis incomplete. Please wait for analysis to finish.");
+      return;
+    }
+
     setIsLoading(true);
     setError(null);
     setResources([]);
+    setMetadata(null);
 
     try {
       const response = await fetch(`${BACKEND_URL}/api/resources`, {
@@ -52,7 +60,9 @@ export default function ResourceFetcher({ codeContext, isAnalyzing, sourceCode }
         },
         body: JSON.stringify({
           codeContext: codeContext,
+          reviewIR: codeContext.reviewIR,
           sourceCode: sourceCode,
+          userIntent: userIntent,
         }),
       });
 
@@ -65,6 +75,7 @@ export default function ResourceFetcher({ codeContext, isAnalyzing, sourceCode }
 
       if (data.success && data.resources) {
         setResources(data.resources);
+        setMetadata(data.metadata);
       } else {
         throw new Error('Invalid response from server');
       }
@@ -100,7 +111,7 @@ export default function ResourceFetcher({ codeContext, isAnalyzing, sourceCode }
       case 'stackoverflow': return 'bg-orange-500/10 text-orange-400 border-orange-500/20';
       case 'documentation': return 'bg-blue-500/10 text-blue-400 border-blue-500/20';
       case 'video': return 'bg-red-500/10 text-red-400 border-red-500/20';
-      default: return 'bg-gray-500/10 text-gray-400 border-gray-500/20';
+      default: return 'bg-muted/50 text-muted-foreground border-border';
     }
   };
 
@@ -109,15 +120,25 @@ export default function ResourceFetcher({ codeContext, isAnalyzing, sourceCode }
   };
 
   return (
-    <div className="flex flex-col h-full bg-[#0a0a0a]">
+    <div className="flex flex-col h-full bg-background">
       {/* Header */}
-      <div className="border-b border-zinc-800 bg-[#0f0f0f] p-4">
+      <div className="border-b border-border bg-muted/40 p-4">
+        <div className="mb-4">
+          <h2 className="text-lg font-semibold text-white mb-1">Learning Resources</h2>
+          <p className="text-sm text-zinc-400">
+            AI-curated resources based on your code context
+          </p>
+        </div>
+
         <div className="flex items-center justify-between mb-4">
-          <div>
-            <h2 className="text-lg font-semibold text-white mb-1">Learning Resources</h2>
-            <p className="text-sm text-zinc-400">
-              AI-curated resources based on your code context
-            </p>
+          <div className="flex-1 mr-4">
+            <input
+              type="text"
+              placeholder="What do you want to learn? (optional)"
+              value={userIntent}
+              onChange={(e) => setUserIntent(e.target.value)}
+              className="w-full px-3 py-2 rounded-lg border border-input bg-background text-foreground text-sm focus:outline-none focus:border-emerald-500/50 focus:ring-1 focus:ring-emerald-500/50 placeholder:text-muted-foreground"
+            />
           </div>
           <button
             onClick={fetchResources}
@@ -133,14 +154,39 @@ export default function ResourceFetcher({ codeContext, isAnalyzing, sourceCode }
           </button>
         </div>
 
+        {/* Pipeline Metadata (shows what actually happened) */}
+        {resources.length > 0 && (
+          <div className="mb-4 p-3 rounded-lg bg-muted/50 border border-border">
+            <div className="text-xs text-muted-foreground space-y-1">
+              <div className="flex justify-between">
+                <span>Baseline Queries:</span>
+                <span className="text-emerald-400">{metadata?.pipeline?.baselineQueries || 0}</span>
+              </div>
+              <div className="flex justify-between">
+                <span>Expanded Queries:</span>
+                <span className="text-blue-400">{metadata?.pipeline?.expandedQueries || 0}</span>
+              </div>
+              <div className="flex justify-between">
+                <span>LLM-Ranked:</span>
+                <span className="text-purple-400">{metadata?.pipeline?.resourcesRanked || 0}/{resources.length}</span>
+              </div>
+              {metadata?.learningGoal && (
+                <div className="pt-2 border-t border-zinc-800 text-zinc-400">
+                  Goal: {metadata.learningGoal}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* Filters */}
         {resources.length > 0 && (
           <div className="flex gap-2 flex-wrap">
             <button
               onClick={() => setActiveFilter('all')}
               className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${activeFilter === 'all'
-                ? 'bg-zinc-700 text-white'
-                : 'bg-zinc-800/50 text-zinc-400 hover:bg-zinc-800'
+                ? 'bg-secondary text-secondary-foreground'
+                : 'bg-muted/50 text-muted-foreground hover:bg-muted'
                 }`}
             >
               All ({resources.length})
@@ -228,7 +274,7 @@ export default function ResourceFetcher({ codeContext, isAnalyzing, sourceCode }
             {filteredResources.map((resource, index) => (
               <div
                 key={index}
-                className="group rounded-lg border border-zinc-800 bg-zinc-900/50 p-4 transition-all hover:border-zinc-700 hover:bg-zinc-900"
+                className="group rounded-lg border border-border bg-muted/50 p-4 transition-all hover:border-foreground/20 hover:bg-muted"
               >
                 <div className="flex items-start gap-3">
                   <div className={`rounded-lg border p-2 ${getTypeColor(resource.type)}`}>
@@ -237,7 +283,7 @@ export default function ResourceFetcher({ codeContext, isAnalyzing, sourceCode }
 
                   <div className="flex-1 min-w-0">
                     <div className="flex items-start justify-between gap-2 mb-2">
-                      <h3 className="font-medium text-white text-sm group-hover:text-emerald-400 transition-colors line-clamp-2">
+                      <h3 className="font-medium text-foreground text-sm group-hover:text-emerald-400 transition-colors line-clamp-2">
                         {resource.title}
                       </h3>
                       <div className="flex items-center gap-1.5 shrink-0">
@@ -255,7 +301,7 @@ export default function ResourceFetcher({ codeContext, isAnalyzing, sourceCode }
 
                     {/* Metadata */}
                     {resource.metadata && (
-                      <div className="flex items-center gap-4 mb-3 text-xs text-zinc-500">
+                      <div className="flex items-center gap-4 mb-3 text-xs text-muted-foreground">
                         {resource.metadata.stars !== undefined && (
                           <div className="flex items-center gap-1">
                             <Star className="h-3.5 w-3.5" />

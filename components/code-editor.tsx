@@ -10,7 +10,9 @@ import { getMDNDoc } from "@/lib/mdn-docs";
 import { useTranslation } from "@/lib/translation/use-translation";
 import { Editor } from "@monaco-editor/react";
 import { ArrowRightLeft, BookOpen, Brain, Loader2, Play, Sparkles } from "lucide-react";
+import { useTheme } from "next-themes";
 import { useEffect, useRef, useState } from "react";
+import { ModeToggle } from "./mode-toggle";
 
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3001';
 
@@ -30,6 +32,7 @@ export default function CodeEditor() {
   const rightPanelRef = useRef<HTMLDivElement>(null);
   const [targetLanguage, setTargetLanguage] = useState<string>("python");
   const { translate, isTranslating, result: translationResult, error: translationError, reset: resetTranslation } = useTranslation();
+  const { theme, resolvedTheme } = useTheme();
 
 
 
@@ -307,16 +310,16 @@ export default function CodeEditor() {
   const runButtonInfo = getRunButtonInfo();
 
   return (
-    <div className="flex h-screen w-full flex-col bg-[#0a0a0a]">
+    <div className="flex h-screen w-full flex-col bg-background">
       {/* Header */}
-      <div className="flex items-center justify-between border-b border-zinc-800 bg-[#0f0f0f] px-6 py-4">
+      <div className="flex items-center justify-between border-b border-border bg-muted/40 px-6 py-4">
         <div className="flex items-center gap-4">
-          <h1 className="text-xl font-semibold text-white">Solace</h1>
-          <div className="h-6 w-px bg-zinc-700" />
+          <h1 className="text-xl font-semibold text-foreground">Solace</h1>
+          <div className="h-6 w-px bg-border" />
           <select
             value={language}
             onChange={(e) => setLanguage(e.target.value)}
-            className="rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-1.5 text-sm text-white outline-none transition-colors hover:border-zinc-600 focus:border-blue-500"
+            className="rounded-lg border border-input bg-background px-3 py-1.5 text-sm text-foreground outline-none transition-colors hover:border-accent-foreground/50 focus:border-primary"
           >
             <optgroup label="Browser (Client-side)">
               <option value="javascript">JavaScript</option>
@@ -340,7 +343,7 @@ export default function CodeEditor() {
               setTargetLanguage(e.target.value);
               resetTranslation();
             }}
-            className="rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-1.5 text-sm text-white outline-none transition-colors hover:border-zinc-600 focus:border-purple-500"
+            className="rounded-lg border border-input bg-background px-3 py-1.5 text-sm text-foreground outline-none transition-colors hover:border-accent-foreground/50 focus:border-purple-500"
           >
             <option value="typescript">→ TypeScript</option>
             <option value="python">→ Python</option>
@@ -411,8 +414,8 @@ export default function CodeEditor() {
           <button
             onClick={() => setActiveTab("translate")}
             className={`flex items-center gap-2 px-6 py-3 text-sm font-medium transition-colors border-b-2 ${activeTab === "translate"
-              ? "border-purple-500 text-white bg-zinc-900/50"
-              : "border-transparent text-zinc-400 hover:text-white hover:bg-zinc-900/30"
+              ? "border-purple-500 text-foreground bg-accent/50"
+              : "border-transparent text-muted-foreground hover:text-foreground hover:bg-accent/30"
               }`}
           >
             <ArrowRightLeft className="h-4 w-4" />
@@ -435,6 +438,8 @@ export default function CodeEditor() {
             Resources
           </button>
 
+          <div className="h-6 w-px bg-border mx-2" />
+          <ModeToggle />
         </div>
       </div>
 
@@ -442,11 +447,11 @@ export default function CodeEditor() {
       <div ref={containerRef} className="flex flex-1 min-h-0">
         {/* Editor Panel */}
         <div
-          className="flex flex-col border-r border-zinc-800"
+          className="flex flex-col border-r border-border"
           style={{ width: `${editorWidth}%` }}
         >
-          <div className="border-b border-zinc-800 bg-[#0f0f0f] px-6 py-2">
-            <span className="text-sm font-medium text-zinc-400">Editor</span>
+          <div className="border-b border-border bg-muted/40 px-6 py-2">
+            <span className="text-sm font-medium text-muted-foreground">Editor</span>
           </div>
           <div className="flex-1">
             <Editor
@@ -454,7 +459,7 @@ export default function CodeEditor() {
               language={language}
               value={code}
               onChange={(value) => setCode(value || "")}
-              theme="vs-dark"
+              theme={resolvedTheme === 'dark' ? "vs-dark" : "light"}
               onMount={(editor, monaco) => {
                 const supportedLanguages = [
                   'javascript', 'typescript', 'python', 'cpp',
@@ -579,23 +584,23 @@ export default function CodeEditor() {
 
         {/* Resizable Divider */}
         <div
-          className="w-1 cursor-col-resize bg-zinc-800 hover:bg-blue-500 transition-colors"
+          className="w-1 cursor-col-resize bg-border hover:bg-primary transition-colors"
           onMouseDown={() => setIsDragging(true)}
         />
 
         {/* Right Panel - Tabbed Output/Context/Review */}
         <div
           ref={rightPanelRef}
-          className="flex flex-col bg-[#0a0a0a]"
+          className="flex flex-col bg-background"
           style={{ width: `${100 - editorWidth}%` }}
         >
           {/* Tab Headers */}
-          <div className="flex border-b border-zinc-800 bg-[#0f0f0f]">
+          <div className="flex border-b border-border bg-muted/40">
             <button
               onClick={() => setActiveTab("output")}
               className={`flex items-center gap-2 px-6 py-3 text-sm font-medium transition-colors border-b-2 ${activeTab === "output"
-                ? "border-blue-500 text-white bg-zinc-900/50"
-                : "border-transparent text-zinc-400 hover:text-white hover:bg-zinc-900/30"
+                ? "border-primary text-foreground bg-accent/50"
+                : "border-transparent text-muted-foreground hover:text-foreground hover:bg-accent/30"
                 }`}
             >
               <Play className="h-4 w-4" />
@@ -604,8 +609,8 @@ export default function CodeEditor() {
             <button
               onClick={() => setActiveTab("context")}
               className={`flex items-center gap-2 px-6 py-3 text-sm font-medium transition-colors border-b-2 ${activeTab === "context"
-                ? "border-blue-500 text-white bg-zinc-900/50"
-                : "border-transparent text-zinc-400 hover:text-white hover:bg-zinc-900/30"
+                ? "border-primary text-foreground bg-accent/50"
+                : "border-transparent text-muted-foreground hover:text-foreground hover:bg-accent/30"
                 }`}
             >
               <Brain className="h-4 w-4" />
@@ -617,8 +622,8 @@ export default function CodeEditor() {
             <button
               onClick={() => setActiveTab("review")}
               className={`flex items-center gap-2 px-6 py-3 text-sm font-medium transition-colors border-b-2 ${activeTab === "review"
-                ? "border-cyan-500 text-white bg-zinc-900/50"
-                : "border-transparent text-zinc-400 hover:text-white hover:bg-zinc-900/30"
+                ? "border-cyan-500 text-foreground bg-accent/50"
+                : "border-transparent text-muted-foreground hover:text-foreground hover:bg-accent/30"
                 }`}
             >
               <Sparkles className="h-4 w-4" />
@@ -634,16 +639,16 @@ export default function CodeEditor() {
             {activeTab === "output" ? (
               <div className="flex-1 h-full overflow-auto p-6">
                 {output ? (
-                  <pre className="font-mono text-sm text-zinc-300 whitespace-pre-wrap">
+                  <pre className="font-mono text-sm text-foreground whitespace-pre-wrap">
                     {output}
                   </pre>
                 ) : (
                   <div className="flex h-full items-center justify-center">
                     <div className="text-center">
-                      <p className="text-sm text-zinc-600 mb-2">
+                      <p className="text-sm text-muted-foreground mb-2">
                         Run your code to see the output here
                       </p>
-                      <p className="text-xs text-zinc-700">
+                      <p className="text-xs text-muted-foreground/80">
                         {canRunClientSide(language)
                           ? '• Runs instantly in your browser'
                           : canRunOnBackend(language)
@@ -688,6 +693,6 @@ export default function CodeEditor() {
           </div>
         </div>
       </div>
-    </div>
+    </div >
   );
 }
