@@ -1,19 +1,23 @@
 /**
  * Code Review Viewer Component
- * Displays LLM-powered code review from Qwen 3-32B
+ * Displays LLM-powered code review from Qwen 3-32B with premium styling
  */
 
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { motion } from "framer-motion";
 import {
   AlertCircle,
+  AlertTriangle,
   CheckCircle2,
   Clock,
   FileWarning,
   Lightbulb,
   Shield,
+  Sparkles,
   Target,
   XCircle,
+  Zap,
 } from "lucide-react";
 import { JSX, useState } from "react";
 
@@ -42,20 +46,39 @@ interface CodeReviewViewerProps {
   error?: string | null;
 }
 
-export function CodeReviewViewer({ review, metadata, isLoading, error }: CodeReviewViewerProps) {
-  const [activeSection, setActiveSection] = useState<string | null>(null);
+const containerVariants = {
+  hidden: { opacity: 0 },
+  visible: {
+    opacity: 1,
+    transition: {
+      staggerChildren: 0.1,
+    },
+  },
+};
 
+const itemVariants = {
+  hidden: { opacity: 0, y: 20 },
+  visible: { opacity: 1, y: 0 },
+};
+
+export function CodeReviewViewer({ review, metadata, isLoading, error }: CodeReviewViewerProps) {
   if (error) {
     return (
       <div className="flex h-full items-center justify-center p-8">
-        <div className="text-center max-w-md">
-          <XCircle className="mx-auto h-12 w-12 text-destructive mb-4" />
-          <p className="text-foreground mb-2 font-medium">Review Failed</p>
+        <motion.div
+          initial={{ opacity: 0, scale: 0.95 }}
+          animate={{ opacity: 1, scale: 1 }}
+          className="text-center max-w-md"
+        >
+          <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-red-500/10 border border-red-500/20">
+            <XCircle className="h-8 w-8 text-red-500" />
+          </div>
+          <h3 className="text-lg font-semibold text-foreground mb-2">Review Failed</h3>
           <p className="text-sm text-muted-foreground mb-4">{error}</p>
-          <p className="text-xs text-zinc-600">
+          <p className="text-xs text-muted-foreground/60">
             Make sure your GROQ_API_KEY is set in the backend environment
           </p>
-        </div>
+        </motion.div>
       </div>
     );
   }
@@ -63,11 +86,29 @@ export function CodeReviewViewer({ review, metadata, isLoading, error }: CodeRev
   if (isLoading) {
     return (
       <div className="flex h-full items-center justify-center p-8">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4" />
-          <p className="text-foreground mb-2">Analyzing code with Qwen 3-32B...</p>
-          <p className="text-xs text-zinc-500">This may take 10-30 seconds</p>
-        </div>
+        <motion.div
+          initial={{ opacity: 0, scale: 0.95 }}
+          animate={{ opacity: 1, scale: 1 }}
+          className="text-center"
+        >
+          <div className="relative mx-auto mb-6">
+            <div className="absolute inset-0 rounded-full bg-cyan-500/20 blur-xl animate-pulse" />
+            <div className="relative flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-cyan-500 to-blue-500 shadow-lg shadow-cyan-500/25">
+              <Sparkles className="h-8 w-8 text-white animate-pulse" />
+            </div>
+          </div>
+          <h3 className="text-lg font-semibold text-foreground mb-2">
+            Analyzing with Qwen 3-32B
+          </h3>
+          <p className="text-sm text-muted-foreground">
+            Deep code analysis in progress...
+          </p>
+          <div className="flex items-center justify-center gap-1 mt-3">
+            <div className="h-1.5 w-1.5 rounded-full bg-cyan-500 animate-bounce" style={{ animationDelay: '0ms' }} />
+            <div className="h-1.5 w-1.5 rounded-full bg-cyan-500 animate-bounce" style={{ animationDelay: '150ms' }} />
+            <div className="h-1.5 w-1.5 rounded-full bg-cyan-500 animate-bounce" style={{ animationDelay: '300ms' }} />
+          </div>
+        </motion.div>
       </div>
     );
   }
@@ -75,11 +116,19 @@ export function CodeReviewViewer({ review, metadata, isLoading, error }: CodeRev
   if (!review) {
     return (
       <div className="flex h-full items-center justify-center p-8">
-        <div className="text-center">
-          <Target className="mx-auto h-12 w-12 text-zinc-600 mb-4" />
-          <p className="text-zinc-400 mb-2">No review available</p>
-          <p className="text-sm text-zinc-600">Click "Get Review" to analyze your code</p>
-        </div>
+        <motion.div
+          initial={{ opacity: 0, scale: 0.95 }}
+          animate={{ opacity: 1, scale: 1 }}
+          className="text-center max-w-sm"
+        >
+          <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-muted/50 border border-border/50">
+            <Target className="h-8 w-8 text-muted-foreground" />
+          </div>
+          <h3 className="text-lg font-semibold text-foreground mb-2">No Review Available</h3>
+          <p className="text-sm text-muted-foreground">
+            Click "Review" to get AI-powered code analysis with insights and recommendations.
+          </p>
+        </motion.div>
       </div>
     );
   }
@@ -89,255 +138,184 @@ export function CodeReviewViewer({ review, metadata, isLoading, error }: CodeRev
       id: 'complexity',
       title: 'Complexity Analysis',
       icon: Target,
-      color: 'text-blue-400',
-      bgColor: 'bg-blue-500/10',
-      borderColor: 'border-blue-500/50',
-      content: review.complexity
+      gradient: 'from-blue-500 to-cyan-500',
+      bg: 'bg-blue-500/5',
+      border: 'border-blue-500/20',
+      iconColor: 'text-blue-500',
     },
     {
       id: 'purpose',
       title: 'Purpose Understanding',
       icon: Lightbulb,
-      color: 'text-yellow-400',
-      bgColor: 'bg-yellow-500/10',
-      borderColor: 'border-yellow-500/50',
-      content: review.purpose
+      gradient: 'from-yellow-500 to-amber-500',
+      bg: 'bg-yellow-500/5',
+      border: 'border-yellow-500/20',
+      iconColor: 'text-yellow-500',
     },
     {
       id: 'behavioral',
       title: 'Behavioral Correctness',
       icon: CheckCircle2,
-      color: 'text-green-400',
-      bgColor: 'bg-green-500/10',
-      borderColor: 'border-green-500/50',
-      content: review.behavioral
+      gradient: 'from-emerald-500 to-green-500',
+      bg: 'bg-emerald-500/5',
+      border: 'border-emerald-500/20',
+      iconColor: 'text-emerald-500',
     },
     {
       id: 'risks',
       title: 'Hidden Risks',
-      icon: AlertCircle,
-      color: 'text-orange-400',
-      bgColor: 'bg-orange-500/10',
-      borderColor: 'border-orange-500/50',
-      content: review.risks
+      icon: AlertTriangle,
+      gradient: 'from-orange-500 to-red-500',
+      bg: 'bg-orange-500/5',
+      border: 'border-orange-500/20',
+      iconColor: 'text-orange-500',
     },
     {
       id: 'edgeCases',
       title: 'Edge Cases & Boundaries',
       icon: FileWarning,
-      color: 'text-purple-400',
-      bgColor: 'bg-purple-500/10',
-      borderColor: 'border-purple-500/50',
-      content: review.edgeCases
+      gradient: 'from-purple-500 to-violet-500',
+      bg: 'bg-purple-500/5',
+      border: 'border-purple-500/20',
+      iconColor: 'text-purple-500',
     },
     {
       id: 'summary',
       title: 'Summary',
       icon: Shield,
-      color: 'text-cyan-400',
-      bgColor: 'bg-cyan-500/10',
-      borderColor: 'border-cyan-500/50',
-      content: review.summary
+      gradient: 'from-cyan-500 to-teal-500',
+      bg: 'bg-cyan-500/5',
+      border: 'border-cyan-500/20',
+      iconColor: 'text-cyan-500',
     },
   ];
 
+  // Parse the review content
+  const parseReviewContent = () => {
+    try {
+      const cleanedRaw = review.raw.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+      const jsonMatch = cleanedRaw.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        return JSON.parse(jsonMatch[0]);
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  };
+
+  const parsedContent = parseReviewContent();
+
   return (
-    <ScrollArea className="flex-1 w-full">
-      <div className="p-6 space-y-4">
-        {/* Review Header */}
-        <div className="flex items-center justify-between pb-4 border-b border-border">
-          <div className="flex items-center gap-2">
-            <CheckCircle2 className="h-5 w-5 text-primary" />
-            <span className="text-sm font-medium text-foreground">AI Code Review</span>
-          </div>
-          {metadata && (
-            <div className="flex items-center gap-3">
-              <Badge variant="outline" className="text-xs border-border text-muted-foreground">
-                Qwen 3-32B
-              </Badge>
-              <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                <Clock className="h-3 w-3" />
-                {metadata.tokensUsed.toLocaleString()} tokens
-              </div>
+    <ScrollArea className="h-full">
+      <motion.div
+        variants={containerVariants}
+        initial="hidden"
+        animate="visible"
+        className="p-6 space-y-6"
+      >
+        {/* Header */}
+        <motion.div
+          variants={itemVariants}
+          className="flex items-center justify-between pb-4 border-b border-border/50"
+        >
+          <div className="flex items-center gap-3">
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-cyan-500 to-blue-500 shadow-lg shadow-cyan-500/20">
+              <Sparkles className="h-4 w-4 text-white" />
             </div>
-          )}
-        </div>
+            <div>
+              <span className="text-sm font-semibold text-foreground">AI Code Review</span>
+              {metadata && (
+                <div className="flex items-center gap-2 text-xs text-muted-foreground mt-0.5">
+                  <Badge variant="outline" className="text-[10px] py-0 h-5">
+                    Qwen 3-32B
+                  </Badge>
+                  <span className="flex items-center gap-1">
+                    <Clock className="h-3 w-3" />
+                    {metadata.tokensUsed.toLocaleString()} tokens
+                  </span>
+                </div>
+              )}
+            </div>
+          </div>
+          <Badge variant="cyan" className="gap-1.5">
+            <CheckCircle2 className="h-3 w-3" />
+            Complete
+          </Badge>
+        </motion.div>
 
-        {/* Structured Review Output */}
-        <div className="rounded-lg border border-border bg-muted/50 p-6 space-y-4">
-          {(() => {
-            try {
-              // Strip <think> blocks and parse JSON
-              const cleanedRaw = review.raw.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
-              const jsonMatch = cleanedRaw.match(/\{[\s\S]*\}/);
-              if (!jsonMatch) return <pre className="text-sm text-foreground">{cleanedRaw}</pre>;
+        {/* Review Sections */}
+        {parsedContent ? (
+          <div className="space-y-4">
+            {sections.map((section, index) => {
+              const content = parsedContent[section.id];
+              if (!content) return null;
 
-              const parsed = JSON.parse(jsonMatch[0]);
-
-              const sections = [
-                { key: 'complexity', label: 'Complexity Analysis', icon: '⚡' },
-                { key: 'purpose', label: 'Purpose Understanding', icon: '🎯' },
-                { key: 'behavioral', label: 'Behavioral Correctness', icon: '✓' },
-                { key: 'risks', label: 'Hidden Risks', icon: '⚠️' },
-                { key: 'edgeCases', label: 'Edge Cases & Boundaries', icon: '🔍' },
-                { key: 'summary', label: 'Summary', icon: '📋' }
-              ];
-
-              return sections.map(section => {
-                const content = parsed[section.key];
-                if (!content) return null;
-
-                return (
-                  <div key={section.key} className="border-l-2 border-cyan-500/50 pl-4">
-                    <div className="flex items-center gap-2 mb-2">
-                      <span className="text-lg">{section.icon}</span>
-                      <h4 className="text-sm font-semibold text-black">{section.label}</h4>
+              return (
+                <motion.div
+                  key={section.id}
+                  variants={itemVariants}
+                  className={`glass rounded-xl overflow-hidden ${section.border} border`}
+                >
+                  {/* Section Header */}
+                  <div className={`flex items-center gap-3 px-4 py-3 ${section.bg}`}>
+                    <div className={`flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-to-br ${section.gradient} shadow-sm`}>
+                      <section.icon className="h-3.5 w-3.5 text-white" />
                     </div>
-                    <p className="text-sm text-black leading-relaxed">
+                    <h4 className="text-sm font-semibold text-foreground">{section.title}</h4>
+                  </div>
+                  {/* Section Content */}
+                  <div className="px-4 py-3">
+                    <p className="text-sm text-foreground leading-relaxed">
                       {content}
                     </p>
                   </div>
-                );
-              });
-            } catch (error) {
-              // Fallback to raw display if parsing fails
-              const cleanedRaw = review.raw.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
-              return <pre className="text-sm text-foreground whitespace-pre-wrap">{cleanedRaw}</pre>;
-            }
-          })()}
-        </div>
+                </motion.div>
+              );
+            })}
+          </div>
+        ) : (
+          /* Fallback: Raw display */
+          <motion.div variants={itemVariants} className="glass rounded-xl p-4">
+            <pre className="text-sm text-foreground whitespace-pre-wrap font-mono leading-relaxed">
+              {review.raw.replace(/<think>[\s\S]*?<\/think>/gi, '').trim()}
+            </pre>
+          </motion.div>
+        )}
 
-        {/* Token Usage Details */}
+        {/* Token Usage */}
         {metadata && (
-          <div className="pt-4 border-t border-border">
-            <div className="grid grid-cols-3 gap-3 text-center">
-              <div className="p-3 rounded bg-muted/50 border border-border">
-                <div className="text-xs text-muted-foreground">Prompt Tokens</div>
-                <div className="text-lg font-semibold text-foreground">
+          <motion.div variants={itemVariants} className="pt-4 border-t border-border/50">
+            <div className="flex items-center gap-2 mb-4">
+              <Zap className="h-4 w-4 text-yellow-500" />
+              <span className="text-sm font-semibold text-foreground">Token Usage</span>
+            </div>
+            <div className="grid grid-cols-3 gap-3">
+              <div className="glass rounded-xl p-4 text-center">
+                <div className="text-2xl font-bold text-foreground">
                   {metadata.promptTokens.toLocaleString()}
                 </div>
+                <span className="text-xs text-muted-foreground">Prompt</span>
               </div>
-              <div className="p-3 rounded bg-muted/50 border border-border">
-                <div className="text-xs text-muted-foreground">Completion Tokens</div>
-                <div className="text-lg font-semibold text-foreground">
+              <div className="glass rounded-xl p-4 text-center">
+                <div className="text-2xl font-bold text-foreground">
                   {metadata.completionTokens.toLocaleString()}
                 </div>
+                <span className="text-xs text-muted-foreground">Completion</span>
               </div>
-              <div className="p-3 rounded bg-muted/50 border border-border">
-                <div className="text-xs text-muted-foreground">Total</div>
-                <div className="text-lg font-semibold text-primary">
+              <div className="glass rounded-xl p-4 text-center bg-gradient-to-br from-cyan-500/5 to-blue-500/5 border border-cyan-500/20">
+                <div className="text-2xl font-bold text-cyan-500">
                   {metadata.tokensUsed.toLocaleString()}
                 </div>
+                <span className="text-xs text-muted-foreground">Total</span>
               </div>
             </div>
-            <p className="text-xs text-zinc-600 text-center mt-3">
+            <p className="text-xs text-muted-foreground text-center mt-4">
               Reviewed at {new Date(metadata.timestamp).toLocaleString()}
             </p>
-          </div>
+          </motion.div>
         )}
-      </div>
+      </motion.div>
     </ScrollArea>
   );
-}
-
-/**
- * Format review content with basic markdown-like styling
- */
-function formatReviewContent(content: string): JSX.Element[] {
-  if (!content) return [];
-
-  const lines = content.split('\n');
-  const elements: JSX.Element[] = [];
-  let key = 0;
-
-  for (const line of lines) {
-    const trimmed = line.trim();
-
-    if (!trimmed) {
-      elements.push(<div key={key++} className="h-2" />);
-      continue;
-    }
-
-    // Headers (lines starting with ###)
-    if (trimmed.startsWith('###')) {
-      elements.push(
-        <h4 key={key++} className="text-base font-semibold text-zinc-200 mt-4 mb-2">
-          {trimmed.replace(/^###\s*/, '')}
-        </h4>
-      );
-      continue;
-    }
-
-    // Bullet points
-    if (trimmed.startsWith('- ') || trimmed.startsWith('* ')) {
-      elements.push(
-        <div key={key++} className="flex gap-2 ml-4 mb-1">
-          <span className="text-cyan-400 mt-1">•</span>
-          <span className="flex-1">{trimmed.substring(2)}</span>
-        </div>
-      );
-      continue;
-    }
-
-    // Numbered lists
-    if (/^\d+\.\s/.test(trimmed)) {
-      const match = trimmed.match(/^(\d+)\.\s(.+)$/);
-      if (match) {
-        elements.push(
-          <div key={key++} className="flex gap-2 ml-4 mb-1">
-            <span className="text-cyan-400">{match[1]}.</span>
-            <span className="flex-1">{match[2]}</span>
-          </div>
-        );
-        continue;
-      }
-    }
-
-    // Bold text (**text**)
-    const boldRegex = /\*\*([^*]+)\*\*/g;
-    if (boldRegex.test(trimmed)) {
-      const parts = trimmed.split(boldRegex);
-      elements.push(
-        <p key={key++} className="mb-2">
-          {parts.map((part, idx) =>
-            idx % 2 === 1 ? (
-              <strong key={idx} className="font-semibold text-zinc-100">{part}</strong>
-            ) : (
-              <span key={idx}>{part}</span>
-            )
-          )}
-        </p>
-      );
-      continue;
-    }
-
-    // Code references (`code`)
-    const codeRegex = /`([^`]+)`/g;
-    if (codeRegex.test(trimmed)) {
-      const parts = trimmed.split(codeRegex);
-      elements.push(
-        <p key={key++} className="mb-2">
-          {parts.map((part, idx) =>
-            idx % 2 === 1 ? (
-              <code key={idx} className="px-1.5 py-0.5 bg-zinc-800 text-cyan-300 rounded text-sm font-mono">
-                {part}
-              </code>
-            ) : (
-              <span key={idx}>{part}</span>
-            )
-          )}
-        </p>
-      );
-      continue;
-    }
-
-    // Regular paragraph
-    elements.push(
-      <p key={key++} className="mb-2">
-        {trimmed}
-      </p>
-    );
-  }
-
-  return elements;
 }

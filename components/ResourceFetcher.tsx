@@ -1,8 +1,25 @@
 // components/ResourceFetcher.tsx
 "use client";
 
-import { AlertCircle, BookOpen, Code, ExternalLink, Eye, Loader2, MessageSquare, Search, Star, Video } from 'lucide-react';
-import { useState } from 'react';
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { motion } from "framer-motion";
+import {
+  AlertCircle,
+  BookOpen,
+  Code,
+  ExternalLink,
+  Eye,
+  Loader2,
+  MessageSquare,
+  Search,
+  Sparkles,
+  Star,
+  Video,
+  Zap,
+} from "lucide-react";
+import { useState } from "react";
 
 interface Resource {
   type: 'github' | 'stackoverflow' | 'documentation' | 'video';
@@ -29,6 +46,21 @@ interface ResourceFetcherProps {
 }
 
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3001';
+
+const containerVariants = {
+  hidden: { opacity: 0 },
+  visible: {
+    opacity: 1,
+    transition: {
+      staggerChildren: 0.05,
+    },
+  },
+};
+
+const itemVariants = {
+  hidden: { opacity: 0, y: 15 },
+  visible: { opacity: 1, y: 0 },
+};
 
 export default function ResourceFetcher(props: ResourceFetcherProps) {
   const { codeContext, isAnalyzing, sourceCode } = props;
@@ -58,7 +90,6 @@ export default function ResourceFetcher(props: ResourceFetcherProps) {
     try {
       let currentReviewResponse = props.reviewResult;
 
-      // STEP 1: If no review available, trigger one automatically
       if (!currentReviewResponse) {
         console.log('[Resources] No review found, triggering auto-review...');
         const reviewRes = await fetch(`${BACKEND_URL}/api/review`, {
@@ -79,24 +110,20 @@ export default function ResourceFetcher(props: ResourceFetcherProps) {
         const reviewData = await reviewRes.json();
         currentReviewResponse = reviewData.review;
 
-        // Notify parent if callback exists
         if (props.onReviewUpdate) {
           props.onReviewUpdate(reviewData.review, reviewData.metadata);
         }
       }
 
-      // STEP 2: Fetch resources with reviewResponse
       const response = await fetch(`${BACKEND_URL}/api/resources`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           codeContext: codeContext,
           reviewIR: codeContext.reviewIR,
           sourceCode: sourceCode,
           userIntent: userIntent,
-          reviewResponse: currentReviewResponse // REQUIRED NOW
+          reviewResponse: currentReviewResponse
         }),
       });
 
@@ -139,13 +166,38 @@ export default function ResourceFetcher(props: ResourceFetcherProps) {
     }
   };
 
-  const getTypeColor = (type: string) => {
+  const getTypeStyles = (type: string) => {
     switch (type) {
-      case 'github': return 'bg-purple-500/10 text-purple-400 border-purple-500/20';
-      case 'stackoverflow': return 'bg-orange-500/10 text-orange-400 border-orange-500/20';
-      case 'documentation': return 'bg-blue-500/10 text-blue-400 border-blue-500/20';
-      case 'video': return 'bg-red-500/10 text-red-400 border-red-500/20';
-      default: return 'bg-muted/50 text-muted-foreground border-border';
+      case 'github': return {
+        bg: 'bg-purple-500/10',
+        border: 'border-purple-500/20',
+        text: 'text-purple-500',
+        gradient: 'from-purple-500 to-violet-500',
+      };
+      case 'stackoverflow': return {
+        bg: 'bg-orange-500/10',
+        border: 'border-orange-500/20',
+        text: 'text-orange-500',
+        gradient: 'from-orange-500 to-amber-500',
+      };
+      case 'documentation': return {
+        bg: 'bg-blue-500/10',
+        border: 'border-blue-500/20',
+        text: 'text-blue-500',
+        gradient: 'from-blue-500 to-cyan-500',
+      };
+      case 'video': return {
+        bg: 'bg-red-500/10',
+        border: 'border-red-500/20',
+        text: 'text-red-500',
+        gradient: 'from-red-500 to-rose-500',
+      };
+      default: return {
+        bg: 'bg-muted/50',
+        border: 'border-border',
+        text: 'text-muted-foreground',
+        gradient: 'from-gray-500 to-gray-600',
+      };
     }
   };
 
@@ -153,31 +205,47 @@ export default function ResourceFetcher(props: ResourceFetcherProps) {
     return resources.filter(r => r.type === type).length;
   };
 
+  const filterButtons = [
+    { id: 'all' as const, label: 'All', icon: Sparkles, count: resources.length },
+    { id: 'github' as const, label: 'GitHub', icon: Code, count: countByType('github') },
+    { id: 'stackoverflow' as const, label: 'Stack Overflow', icon: MessageSquare, count: countByType('stackoverflow') },
+    { id: 'documentation' as const, label: 'Docs', icon: BookOpen, count: countByType('documentation') },
+    { id: 'video' as const, label: 'Videos', icon: Video, count: countByType('video') },
+  ];
+
   return (
-    <div className="flex flex-col h-full bg-background">
+    <div className="flex flex-col h-full">
       {/* Header */}
-      <div className="border-b border-border bg-muted/40 p-4">
-        <div className="mb-4">
-          <h2 className="text-lg font-semibold text-white mb-1">Learning Resources</h2>
-          <p className="text-sm text-zinc-400">
+      <div className="border-b border-border/50 glass-subtle p-4 space-y-4">
+        <div>
+          <div className="flex items-center gap-2 mb-1">
+            <div className="flex h-6 w-6 items-center justify-center rounded-lg bg-gradient-to-br from-emerald-500 to-green-500 shadow-sm">
+              <BookOpen className="h-3 w-3 text-white" />
+            </div>
+            <h2 className="text-lg font-semibold text-foreground">Learning Resources</h2>
+          </div>
+          <p className="text-sm text-muted-foreground">
             AI-curated resources based on your code context
           </p>
         </div>
 
-        <div className="flex items-center justify-between mb-4">
-          <div className="flex-1 mr-4">
+        {/* Search Input & Button */}
+        <div className="flex items-center gap-3">
+          <div className="flex-1 relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <input
               type="text"
               placeholder="What do you want to learn? (optional)"
               value={userIntent}
               onChange={(e) => setUserIntent(e.target.value)}
-              className="w-full px-3 py-2 rounded-lg border border-input bg-background text-foreground text-sm focus:outline-none focus:border-emerald-500/50 focus:ring-1 focus:ring-emerald-500/50 placeholder:text-muted-foreground"
+              className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-border/50 bg-background/50 text-foreground text-sm focus:outline-none focus:border-emerald-500/50 focus:ring-2 focus:ring-emerald-500/20 placeholder:text-muted-foreground transition-all"
             />
           </div>
-          <button
+          <Button
             onClick={fetchResources}
             disabled={isLoading || isAnalyzing || !codeContext}
-            className="flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white shadow-lg shadow-emerald-500/20 transition-all hover:bg-emerald-500 hover:shadow-emerald-500/30 disabled:cursor-not-allowed disabled:opacity-50"
+            variant="neon"
+            className="gap-2"
           >
             {isLoading ? (
               <Loader2 className="h-4 w-4 animate-spin" />
@@ -185,210 +253,235 @@ export default function ResourceFetcher(props: ResourceFetcherProps) {
               <Search className="h-4 w-4" />
             )}
             {isLoading ? 'Fetching...' : 'Find Resources'}
-          </button>
+          </Button>
         </div>
 
-        {/* Pipeline Metadata (shows what actually happened) */}
-        {resources.length > 0 && (
-          <div className="mb-4 p-3 rounded-lg bg-muted/50 border border-border">
-            <div className="text-xs text-muted-foreground space-y-1">
-              <div className="flex justify-between">
-                <span>Baseline Queries:</span>
-                <span className="text-emerald-400">{metadata?.pipeline?.baselineQueries || 0}</span>
-              </div>
-              <div className="flex justify-between">
-                <span>Expanded Queries:</span>
-                <span className="text-blue-400">{metadata?.pipeline?.expandedQueries || 0}</span>
-              </div>
-              <div className="flex justify-between">
-                <span>LLM-Ranked:</span>
-                <span className="text-purple-400">{metadata?.pipeline?.resourcesRanked || 0}/{resources.length}</span>
-              </div>
-              {metadata?.learningGoal && (
-                <div className="pt-2 border-t border-zinc-800 text-zinc-400">
-                  Goal: {metadata.learningGoal}
+        {/* Pipeline Metadata */}
+        {resources.length > 0 && metadata && (
+          <motion.div
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="glass rounded-xl p-3"
+          >
+            <div className="grid grid-cols-4 gap-4 text-xs">
+              <div className="text-center">
+                <div className="text-lg font-bold text-foreground">
+                  {metadata?.pipeline?.baselineQueries || 0}
                 </div>
-              )}
+                <span className="text-muted-foreground">Baseline Queries</span>
+              </div>
+              <div className="text-center">
+                <div className="text-lg font-bold text-blue-500">
+                  {metadata?.pipeline?.expandedQueries || 0}
+                </div>
+                <span className="text-muted-foreground">Expanded</span>
+              </div>
+              <div className="text-center">
+                <div className="text-lg font-bold text-purple-500">
+                  {metadata?.pipeline?.resourcesRanked || 0}
+                </div>
+                <span className="text-muted-foreground">Ranked</span>
+              </div>
+              <div className="text-center">
+                <div className="text-lg font-bold text-emerald-500">
+                  {resources.length}
+                </div>
+                <span className="text-muted-foreground">Results</span>
+              </div>
             </div>
-          </div>
+            {metadata?.learningGoal && (
+              <div className="mt-3 pt-3 border-t border-border/50 text-xs text-muted-foreground flex items-center gap-2">
+                <Zap className="h-3 w-3 text-yellow-500" />
+                <span>Goal: {metadata.learningGoal}</span>
+              </div>
+            )}
+          </motion.div>
         )}
 
         {/* Filters */}
         {resources.length > 0 && (
           <div className="flex gap-2 flex-wrap">
-            <button
-              onClick={() => setActiveFilter('all')}
-              className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${activeFilter === 'all'
-                ? 'bg-secondary text-secondary-foreground'
-                : 'bg-muted/50 text-muted-foreground hover:bg-muted'
-                }`}
-            >
-              All ({resources.length})
-            </button>
-            <button
-              onClick={() => setActiveFilter('github')}
-              className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${activeFilter === 'github'
-                ? 'bg-purple-600/20 text-purple-400 border border-purple-500/30'
-                : 'bg-zinc-800/50 text-zinc-400 hover:bg-zinc-800'
-                }`}
-            >
-              <div className="flex items-center gap-1.5">
-                <Code className="h-3.5 w-3.5" />
-                GitHub ({countByType('github')})
-              </div>
-            </button>
-            <button
-              onClick={() => setActiveFilter('stackoverflow')}
-              className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${activeFilter === 'stackoverflow'
-                ? 'bg-orange-600/20 text-orange-400 border border-orange-500/30'
-                : 'bg-zinc-800/50 text-zinc-400 hover:bg-zinc-800'
-                }`}
-            >
-              <div className="flex items-center gap-1.5">
-                <MessageSquare className="h-3.5 w-3.5" />
-                Stack Overflow ({countByType('stackoverflow')})
-              </div>
-            </button>
-            <button
-              onClick={() => setActiveFilter('documentation')}
-              className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${activeFilter === 'documentation'
-                ? 'bg-blue-600/20 text-blue-400 border border-blue-500/30'
-                : 'bg-zinc-800/50 text-zinc-400 hover:bg-zinc-800'
-                }`}
-            >
-              <div className="flex items-center gap-1.5">
-                <BookOpen className="h-3.5 w-3.5" />
-                Docs ({countByType('documentation')})
-              </div>
-            </button>
-            <button
-              onClick={() => setActiveFilter('video')}
-              className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${activeFilter === 'video'
-                ? 'bg-red-600/20 text-red-400 border border-red-500/30'
-                : 'bg-zinc-800/50 text-zinc-400 hover:bg-zinc-800'
-                }`}
-            >
-              <div className="flex items-center gap-1.5">
-                <Video className="h-3.5 w-3.5" />
-                Videos ({countByType('video')})
-              </div>
-            </button>
+            {filterButtons.map((filter) => (
+              <button
+                key={filter.id}
+                type="button"
+                onClick={() => setActiveFilter(filter.id)}
+                className={`
+                  flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all duration-200
+                  ${activeFilter === filter.id
+                    ? 'bg-emerald-500/10 text-emerald-500 border border-emerald-500/30'
+                    : 'bg-muted/50 text-muted-foreground hover:bg-muted border border-transparent'
+                  }
+                `}
+              >
+                <filter.icon className="h-3.5 w-3.5" />
+                {filter.label}
+                {filter.count > 0 && (
+                  <span className={`ml-1 ${activeFilter === filter.id ? 'text-emerald-400' : 'text-muted-foreground/60'}`}>
+                    ({filter.count})
+                  </span>
+                )}
+              </button>
+            ))}
           </div>
         )}
       </div>
 
       {/* Content */}
-      <div className="flex-1 overflow-auto p-4">
-        {error ? (
-          <div className="flex items-start gap-3 rounded-lg border border-red-500/20 bg-red-500/5 p-4">
-            <AlertCircle className="h-5 w-5 text-red-400 mt-0.5" />
-            <div className="flex-1">
-              <p className="text-sm font-medium text-red-400 mb-1">Error</p>
-              <p className="text-sm text-red-300/80 whitespace-pre-wrap">{error}</p>
-            </div>
-          </div>
-        ) : isLoading ? (
-          <div className="flex flex-col items-center justify-center h-64">
-            <Loader2 className="h-8 w-8 animate-spin text-emerald-500 mb-4" />
-            <p className="text-sm text-zinc-400">Searching for relevant resources...</p>
-            <p className="text-xs text-zinc-600 mt-2">
-              Analyzing code context and fetching from multiple sources
-            </p>
-          </div>
-        ) : resources.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-64">
-            <Search className="h-12 w-12 text-zinc-700 mb-4" />
-            <p className="text-sm text-zinc-500 mb-2">No resources yet</p>
-            <p className="text-xs text-zinc-600 text-center max-w-sm">
-              Write some code and click "Find Resources" to get AI-curated learning materials
-            </p>
-          </div>
-        ) : (
-          <div className="space-y-3">
-            {filteredResources.map((resource, index) => (
-              <div
-                key={index}
-                className="group rounded-lg border border-border bg-muted/50 p-4 transition-all hover:border-foreground/20 hover:bg-muted"
-              >
-                <div className="flex items-start gap-3">
-                  <div className={`rounded-lg border p-2 ${getTypeColor(resource.type)}`}>
-                    {getTypeIcon(resource.type)}
-                  </div>
-
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-start justify-between gap-2 mb-2">
-                      <h3 className="font-medium text-foreground text-sm group-hover:text-emerald-400 transition-colors line-clamp-2">
-                        {resource.title}
-                      </h3>
-                      <div className="flex items-center gap-1.5 shrink-0">
-                        <div className="px-2 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/20">
-                          <span className="text-xs font-medium text-emerald-400">
-                            {Math.round(resource.relevanceScore * 100)}%
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-
-                    <p className="text-sm text-zinc-400 mb-3 line-clamp-2">
-                      {resource.description}
-                    </p>
-
-                    {/* Metadata */}
-                    {resource.metadata && (
-                      <div className="flex items-center gap-4 mb-3 text-xs text-muted-foreground">
-                        {resource.metadata.stars !== undefined && (
-                          <div className="flex items-center gap-1">
-                            <Star className="h-3.5 w-3.5" />
-                            {resource.metadata.stars.toLocaleString()}
-                          </div>
-                        )}
-                        {resource.metadata.views !== undefined && (
-                          <div className="flex items-center gap-1">
-                            <Eye className="h-3.5 w-3.5" />
-                            {resource.metadata.views.toLocaleString()}
-                          </div>
-                        )}
-                        {resource.metadata.answers !== undefined && (
-                          <div className="flex items-center gap-1">
-                            <MessageSquare className="h-3.5 w-3.5" />
-                            {resource.metadata.answers} answers
-                          </div>
-                        )}
-                        {resource.metadata.votes !== undefined && (
-                          <div className="flex items-center gap-1">
-                            <Star className="h-3.5 w-3.5" />
-                            {resource.metadata.votes} votes
-                          </div>
-                        )}
-                        {resource.metadata.language && (
-                          <div className="px-2 py-0.5 rounded bg-zinc-800 text-zinc-400">
-                            {resource.metadata.language}
-                          </div>
-                        )}
-                        {resource.metadata.accepted && (
-                          <div className="px-2 py-0.5 rounded bg-green-500/10 text-green-400 border border-green-500/20">
-                            ✓ Accepted
-                          </div>
-                        )}
-                      </div>
-                    )}
-
-                    <a
-                      href={resource.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1.5 text-sm text-emerald-400 hover:text-emerald-300 transition-colors"
-                    >
-                      Open Resource
-                      <ExternalLink className="h-3.5 w-3.5" />
-                    </a>
-                  </div>
+      <ScrollArea className="flex-1">
+        <div className="p-4">
+          {error ? (
+            <motion.div
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="glass rounded-xl p-4 border border-red-500/20"
+            >
+              <div className="flex items-start gap-3">
+                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-red-500/10">
+                  <AlertCircle className="h-4 w-4 text-red-500" />
+                </div>
+                <div className="flex-1">
+                  <p className="text-sm font-medium text-red-500 mb-1">Error</p>
+                  <p className="text-sm text-muted-foreground whitespace-pre-wrap">{error}</p>
                 </div>
               </div>
-            ))}
-          </div>
-        )}
-      </div>
+            </motion.div>
+          ) : isLoading ? (
+            <div className="flex flex-col items-center justify-center h-64">
+              <motion.div
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                className="text-center"
+              >
+                <div className="relative mx-auto mb-6">
+                  <div className="absolute inset-0 rounded-full bg-emerald-500/20 blur-xl animate-pulse" />
+                  <div className="relative flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-emerald-500 to-green-500 shadow-lg shadow-emerald-500/25">
+                    <Search className="h-8 w-8 text-white animate-pulse" />
+                  </div>
+                </div>
+                <h3 className="text-lg font-semibold text-foreground mb-2">
+                  Finding Resources
+                </h3>
+                <p className="text-sm text-muted-foreground">
+                  Searching GitHub, Stack Overflow, docs, and more...
+                </p>
+              </motion.div>
+            </div>
+          ) : resources.length === 0 ? (
+            <div className="flex flex-col items-center justify-center h-64">
+              <motion.div
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                className="text-center max-w-sm"
+              >
+                <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-muted/50 border border-border/50">
+                  <Search className="h-8 w-8 text-muted-foreground" />
+                </div>
+                <h3 className="text-lg font-semibold text-foreground mb-2">No Resources Yet</h3>
+                <p className="text-sm text-muted-foreground">
+                  Write some code and click "Find Resources" to get AI-curated learning materials.
+                </p>
+              </motion.div>
+            </div>
+          ) : (
+            <motion.div
+              variants={containerVariants}
+              initial="hidden"
+              animate="visible"
+              className="space-y-3"
+            >
+              {filteredResources.map((resource, index) => {
+                const styles = getTypeStyles(resource.type);
+                
+                return (
+                  <motion.div
+                    key={`${resource.type}-${resource.url}-${index}`}
+                    variants={itemVariants}
+                    className="group glass rounded-xl p-4 transition-all duration-300 hover:border-foreground/10 card-hover"
+                  >
+                    <div className="flex items-start gap-4">
+                      {/* Icon */}
+                      <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br ${styles.gradient} shadow-lg`}>
+                        {getTypeIcon(resource.type)}
+                        <span className="sr-only">{resource.type}</span>
+                      </div>
+
+                      {/* Content */}
+                      <div className="flex-1 min-w-0">
+                        {/* Title & Score */}
+                        <div className="flex items-start justify-between gap-3 mb-2">
+                          <h3 className="font-medium text-foreground text-sm leading-snug line-clamp-2 group-hover:text-emerald-500 transition-colors">
+                            {resource.title}
+                          </h3>
+                          <Badge variant="success" className="shrink-0 text-[10px]">
+                            {Math.round(resource.relevanceScore * 100)}%
+                          </Badge>
+                        </div>
+
+                        {/* Description */}
+                        <p className="text-sm text-muted-foreground mb-3 line-clamp-2 leading-relaxed">
+                          {resource.description}
+                        </p>
+
+                        {/* Metadata */}
+                        {resource.metadata && (
+                          <div className="flex items-center gap-3 mb-3 text-xs text-muted-foreground">
+                            {resource.metadata.stars !== undefined && (
+                              <div className="flex items-center gap-1">
+                                <Star className="h-3.5 w-3.5 text-yellow-500" />
+                                {resource.metadata.stars.toLocaleString()}
+                              </div>
+                            )}
+                            {resource.metadata.views !== undefined && (
+                              <div className="flex items-center gap-1">
+                                <Eye className="h-3.5 w-3.5" />
+                                {resource.metadata.views.toLocaleString()}
+                              </div>
+                            )}
+                            {resource.metadata.answers !== undefined && (
+                              <div className="flex items-center gap-1">
+                                <MessageSquare className="h-3.5 w-3.5" />
+                                {resource.metadata.answers} answers
+                              </div>
+                            )}
+                            {resource.metadata.votes !== undefined && (
+                              <div className="flex items-center gap-1">
+                                <Star className="h-3.5 w-3.5" />
+                                {resource.metadata.votes} votes
+                              </div>
+                            )}
+                            {resource.metadata.language && (
+                              <Badge variant="outline" className="text-[10px] py-0 h-5">
+                                {resource.metadata.language}
+                              </Badge>
+                            )}
+                            {resource.metadata.accepted && (
+                              <Badge variant="success" className="text-[10px] py-0 h-5">
+                                Accepted
+                              </Badge>
+                            )}
+                          </div>
+                        )}
+
+                        {/* Link */}
+                        <a
+                          href={resource.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1.5 text-sm font-medium text-emerald-500 hover:text-emerald-400 transition-colors"
+                        >
+                          Open Resource
+                          <ExternalLink className="h-3.5 w-3.5" />
+                        </a>
+                      </div>
+                    </div>
+                  </motion.div>
+                );
+              })}
+            </motion.div>
+          )}
+        </div>
+      </ScrollArea>
     </div>
   );
 }

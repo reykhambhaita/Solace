@@ -6,7 +6,18 @@ const nextConfig: NextConfig = {
   // Use a relative path - Next.js will resolve it correctly
   outputFileTracingRoot: path.join(process.cwd(), '../'),
 
-  turbopack: {},
+  // Configure Turbopack to handle Node.js modules in browser context
+  turbopack: {
+    resolveAlias: {
+      // Provide empty modules for Node.js built-ins in browser
+      fs: { browser: './lib/polyfills/empty.js' },
+      path: { browser: './lib/polyfills/empty.js' },
+      crypto: { browser: './lib/polyfills/empty.js' },
+    },
+  },
+
+  // Use serverExternalPackages to handle web-tree-sitter properly
+  serverExternalPackages: ['web-tree-sitter'],
   webpack: (config, { isServer }: { isServer: boolean }) => {
     if (!isServer) {
       config.resolve.fallback = {
