@@ -76,6 +76,7 @@ export interface ReviewIR {
     classes: number;
     linesOfCode: number;
     paradigm: string;
+    loops: number; // ADDED
     mixing?: ParadigmMixing; // NEW
     fitnessScore?: number; // NEW
   };
@@ -498,6 +499,7 @@ export function toReviewIR(context: CodeContext, cst: CSTNode): ReviewIR {
       classes: context.paradigm.patterns.classes,
       linesOfCode,
       paradigm: context.paradigm.primary.paradigm,
+      loops: context.paradigm.patterns.loops, // ADDED
       mixing: context.paradigm.mixing,
       fitnessScore: context.paradigm.fitnessScore,
     },
@@ -719,6 +721,7 @@ export function analyzeCodeContext(
             classes: 0,
             linesOfCode: 0,
             paradigm: 'procedural',
+            loops: 0, // ADDED
           },
           behavior: {
             executionModel: 'synchronous',
@@ -1151,7 +1154,7 @@ function createEmptyReviewIR(language: string): ReviewIR {
     language,
     codeType: 'unknown',
     intent: { primary: 'unknown', description: '' },
-    structure: { functions: 0, classes: 0, linesOfCode: 0, paradigm: 'procedural' },
+    structure: { functions: 0, classes: 0, linesOfCode: 0, paradigm: 'procedural', loops: 0 },
     behavior: {
       executionModel: 'synchronous',
       isDeterministic: true,

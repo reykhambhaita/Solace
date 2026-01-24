@@ -61,15 +61,17 @@ function extractReviewAnchors(reviewIR, codeContext, reviewResponse) {
 
 function isTrivialCode(reviewIR, codeContext) {
   // Detect hello-world, console.log, print-only patterns
+  // We relax these conditions to prevent aggressive short-circuiting
   const trivialPatterns = [
-    reviewIR.structure.linesOfCode < 5,
-    reviewIR.structure.functions === 0 && reviewIR.structure.classes === 0,
+    reviewIR.structure.linesOfCode < 3, // Reduced from 5
+    (reviewIR.structure.functions === 0 && reviewIR.structure.classes === 0 && (reviewIR.structure.loops || 0) === 0), // Added loops
     reviewIR.elements.decisionRules.length === 0,
     codeContext.libraries.libraries.length === 0
   ];
 
   const trivialCount = trivialPatterns.filter(Boolean).length;
-  return trivialCount >= 3;
+  // Require 4/4 trivial indicators instead of 3/4 to be considered truly trivial
+  return trivialCount >= 4;
 }
 
 function validateReviewQuality(reviewResponse) {

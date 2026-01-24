@@ -350,11 +350,14 @@ async function rankResourcesWithLLM(resources, reviewContext) {
   }
 
   try {
-    const systemPrompt = `Score ${resources.length} resources (0.0-1.0) for learning goal: "${reviewContext.learningGoal}"
-
+    const systemPrompt = `Score ${resources.length} resources (0.00-1.00) for learning goal: "${reviewContext.learningGoal}"
 Priority: ${JSON.stringify(reviewContext.contentPriority)}
 
-Return ONLY JSON array of scores: [0.95, 0.87, ...]`;
+STRICT RULES:
+- Return ONLY a raw JSON array of numbers.
+- NO labels, NO keys, NO explanations.
+- Output MUST be exactly this format: [0.95, 0.88, 0.42, ...]
+- Maintain the exact order of resources provided.`;
 
     const userPrompt = resources.map((r, i) =>
       `${i}. [${r.type}] ${r.title}\n   ${r.description?.substring(0, 100)}`
@@ -380,15 +383,40 @@ Return ONLY JSON array of scores: [0.95, 0.87, ...]`;
     if (!response.ok) throw new Error(`Ranking API error: ${response.status}`);
 
     const data = await response.json();
-    const scoresText = data.choices[0]?.message?.content || '[]';
-    const jsonMatch = scoresText.match(/\[[\s\S]*\]/);
-    const scores = jsonMatch ? JSON.parse(jsonMatch[0]) : [];
+    let scoresText = data.choices[0]?.message?.content || '[]';
 
-    return resources.map((r, i) => ({
-      ...r,
-      relevanceScore: scores[i] || r.rawRelevance || 0.5,
-      ranked: true
-    }));
+    // Robust cleanup: remove any think tags or MD formatting
+    scoresText = scoresText.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+    scoresText = scoresText.replace(/^```json?\s*/i, '').replace(/\n?```\s*$/i, '');
+
+    const jsonMatch = scoresText.match(/\[[\s\S]*\]/);
+    let scores = [];
+
+    if (jsonMatch) {
+      try {
+        const rawScores = JSON.parse(jsonMatch[0]);
+        // Handle both [0.1, 0.2] and [{score: 0.1}, {score: 0.2}]
+        scores = rawScores.map(s => typeof s === 'number' ? s : (parseFloat(s) || parseFloat(s.score) || 0.5));
+      } catch (e) {
+        // Fallback: extract all numbers from the string
+        console.warn('[Ranking] JSON parse failed, attempting regex extract', e.message);
+        scores = (jsonMatch[0].match(/\d+\.?\d*/g) || []).map(num => parseFloat(num));
+      }
+    }
+
+    console.log(`[Ranking] Extracted ${scores.length} scores for ${resources.length} resources`);
+
+    return resources.map((r, i) => {
+      let relevanceScore = scores[i];
+      if (relevanceScore === undefined || isNaN(relevanceScore)) {
+        relevanceScore = r.rawRelevance || 0.5;
+      }
+      return {
+        ...r,
+        relevanceScore,
+        ranked: true
+      };
+    });
 
   } catch (error) {
     console.error('[Ranking] Failed, using pre-ranking:', error.message);
