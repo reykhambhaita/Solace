@@ -2,55 +2,54 @@
 const express = require('express');
 const router = express.Router();
 
-async function buildSearchQueries(reviewContext, codeContext, sourceCode = '') {
+async function buildSearchQueries(reviewResponse, codeContext, sourceCode = '', userIntent = '') {
   const GROQ_API_KEY = process.env.GROQ_API_KEY;
 
   if (!GROQ_API_KEY) {
     console.warn('GROQ API key not configured, falling back to basic queries');
-    return buildFallbackQueriesFromReview(reviewContext, codeContext);
+    return buildFallbackQueries(reviewResponse, codeContext);
   }
 
   try {
     const language = codeContext.language.language;
-    const systemPrompt = `You are a search query optimization expert. Given an enriched learning context, generate 10-15 HIGHLY SPECIFIC search queries optimized for different content types.
+    const frameworks = codeContext.libraries.frameworks.map(f => f.name).join(', ') || 'None';
+    const libraries = codeContext.libraries.libraries.filter(l => !l.isStandardLib).slice(0, 5).map(l => l.name).join(', ') || 'None';
 
-QUERY TYPES TO GENERATE:
-1. Official Documentation (2-3 queries) - Target MDN, language docs, framework docs
-2. Tutorial/Guide (3-4 queries) - Target step-by-step learning content
-3. Conceptual Explanation (2-3 queries) - Target theory and understanding
-4. Video Content (2-3 queries) - Target YouTube, courses, screencasts
-5. Troubleshooting (2-3 queries) - Target Stack Overflow, issue solutions
+    const systemPrompt = `You are an expert at generating high-precision search queries for developer learning.
+Given a technical review and code context, generate 10-15 HIGHLY SPECIFIC search queries.
 
-QUERY OPTIMIZATION RULES:
-- Use exact technical terms and official names
-- Include language/framework version context where relevant
-- Add keywords like "tutorial", "guide", "explained", "how to"
-- Use variations: "vs", "comparison", "best practices", "common mistakes"
-- Target different skill levels: "beginner", "advanced", "deep dive"
+CRITICAL RULES:
+- Queries must be SPECIFIC to the code's purpose and technical stack.
+- Avoid generic terms like "tutorial" or "guide" unless paired with a very specific API or concept.
+- Prioritize official documentation, deep-dives into specific APIs, and troubleshooting for the exact patterns used.
+- Ensure queries cover: Official Docs, Advanced Patterns, Edge Cases, and Troubleshooting.
+
+IMPORTANT: Output ONLY the raw JSON array. No thinking, no explanations, no markdown code blocks.
 
 Return ONLY a JSON array:
 [
   {
-    "query": "specific search query string",
-    "type": "documentation|tutorial|conceptual|video|troubleshooting",
-    "contentType": "article|video|docs",
-    "targetAudience": "beginner|intermediate|advanced",
+    "query": "exact search query string",
+    "intent": "documentation|tutorial|conceptual|video|troubleshooting",
+    "searchEngine": "mdn|tavily|stackoverflow",
     "weight": 0.7-1.0
   }
 ]`;
 
-    const userPrompt = `Generate optimized search queries from this learning context:
+    const userPrompt = `Generate optimized search queries based on this AI review and code context:
 
+TECHNICAL PURPOSE: ${reviewResponse.purpose}
+CODE SUMMARY: ${reviewResponse.summary}
 LANGUAGE: ${language}
-PRIMARY CONCEPTS: ${reviewContext.primaryConcepts?.join(', ')}
-PREREQUISITES: ${reviewContext.prerequisites?.join(', ')}
-RELATED TOPICS: ${reviewContext.relatedTopics?.join(', ')}
-ECOSYSTEM TERMS: ${reviewContext.ecosystemTerms?.join(', ')}
+FRAMEWORKS: ${frameworks}
+LIBRARIES/IMPORTS: ${libraries}
+${userIntent ? `USER INTENT: ${userIntent}` : ''}
 
-SEARCH INTENTS:
-${JSON.stringify(reviewContext.searchIntents, null, 2)}
+CONTEXTUAL DETAILS:
+- Behavioral correctness: ${reviewResponse.behavioral}
+- Complexity: ${reviewResponse.complexity}
 
-Generate 10-15 diverse, optimized search queries covering all content types and skill levels.`;
+Generate 10-15 diverse, high-precision search queries. Route them to the most appropriate engine (mdn for core JS/TS docs, stackoverflow for troubleshooting, tavily for general web search/tutorials).`;
 
     const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
@@ -64,7 +63,7 @@ Generate 10-15 diverse, optimized search queries covering all content types and 
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userPrompt }
         ],
-        temperature: 0.6,
+        temperature: 0.4,
         max_tokens: 1500,
       }),
     });
@@ -74,65 +73,48 @@ Generate 10-15 diverse, optimized search queries covering all content types and 
     }
 
     const data = await response.json();
-    const content = data.choices[0]?.message?.content || '[]';
+    let content = data.choices[0]?.message?.content || '[]';
+
+    // Robust cleanup
+    content = content.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+    content = content.replace(/^```json?\s*/i, '').replace(/\n?```\s*$/i, '');
 
     const jsonMatch = content.match(/\[[\s\S]*\]/);
     const queries = jsonMatch ? JSON.parse(jsonMatch[0]) : [];
 
     const formattedQueries = queries.map(q => ({
-      primary: q.query,
+      primary: q.query || q.primary,
       weight: q.weight || 0.8,
-      type: q.type || 'general',
-      contentType: q.contentType || 'article',
-      targetAudience: q.targetAudience || 'intermediate'
+      intent: q.intent || 'general',
+      searchEngine: q.searchEngine || 'tavily',
+      source: 'llm-generated'
     }));
 
-    console.log(`[Query Builder] Generated ${formattedQueries.length} queries from review context`);
-    formattedQueries.forEach((q, i) => {
-      console.log(`  ${i + 1}. [${q.type}/${q.contentType}] ${q.primary}`);
-    });
-
-    return formattedQueries.length > 0 ? formattedQueries : buildFallbackQueriesFromReview(reviewContext, codeContext);
+    console.log(`[Query Builder] Generated ${formattedQueries.length} queries directly from review`);
+    return formattedQueries.length > 0 ? formattedQueries : buildFallbackQueries(reviewResponse, codeContext);
 
   } catch (error) {
     console.error('Query generation error:', error);
-    return buildFallbackQueriesFromReview(reviewContext, codeContext);
+    return buildFallbackQueries(reviewResponse, codeContext);
   }
 }
 
-function buildFallbackQueriesFromReview(reviewContext, codeContext) {
+function buildFallbackQueries(reviewResponse, codeContext) {
   const queries = [];
   const language = codeContext.language.language;
 
-  // Generate from review context
-  reviewContext.primaryConcepts?.forEach(concept => {
-    queries.push({
-      primary: `${language} ${concept} tutorial`,
-      weight: 1.0,
-      type: 'tutorial',
-      contentType: 'article'
-    });
+  // Extract key terms from purpose if possible (simple split)
+  const terms = (reviewResponse.purpose || language).split(' ').slice(0, 5).join(' ');
+
+  queries.push({
+    primary: `${language} ${terms} documentation`,
+    weight: 1.0,
+    intent: 'documentation',
+    searchEngine: 'tavily',
+    source: 'fallback'
   });
 
-  reviewContext.searchIntents?.documentation?.forEach(intent => {
-    queries.push({
-      primary: intent,
-      weight: 0.9,
-      type: 'documentation',
-      contentType: 'docs'
-    });
-  });
-
-  reviewContext.searchIntents?.videos?.forEach(intent => {
-    queries.push({
-      primary: intent,
-      weight: 0.85,
-      type: 'video',
-      contentType: 'video'
-    });
-  });
-
-  return queries.slice(0, 10);
+  return queries;
 }
 /**
  * Fallback query generation when LLM is unavailable
@@ -187,73 +169,61 @@ async function fetchTavilyByIntent(queries) {
   const TAVILY_API_KEY = process.env.TAVILY_API_KEY;
   if (!TAVILY_API_KEY) return [];
 
-  // Group by intent
-  const intentGroups = {};
-  queries.forEach(q => {
-    const intent = q.intent || 'general';
-    if (!intentGroups[intent]) intentGroups[intent] = [];
-    intentGroups[intent].push(q);
-  });
+  if (queries.length === 0) return [];
 
-  const allResults = [];
+  try {
+    // Combine ALL queries into a single search using OR operator
+    const allQueryStrings = queries.slice(0, 10).map(q => q.primary);
+    const combinedQuery = allQueryStrings.join(' OR ');
 
-  // Fetch each intent group separately
-  for (const [intent, intentQueries] of Object.entries(intentGroups)) {
-    try {
-      const topQueries = intentQueries.slice(0, 3);
-      const combinedQuery = topQueries.map(q => q.primary).join(' OR ');
+    console.log(`[Tavily] Sending single batch request with ${allQueryStrings.length} queries`);
 
-      console.log(`[Tavily:${intent}] Fetching ${topQueries.length} queries`);
+    const response = await fetch('https://api.tavily.com/search', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        api_key: TAVILY_API_KEY,
+        query: combinedQuery,
+        search_depth: 'advanced',
+        max_results: Math.min(allQueryStrings.length * 2, 20)
+      })
+    });
 
-      const response = await fetch('https://api.tavily.com/search', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          api_key: TAVILY_API_KEY,
-          query: combinedQuery,
-          search_depth: 'advanced',
-          max_results: Math.min(topQueries.length * 2, 10)
-        })
-      });
+    if (!response.ok) throw new Error(`Tavily error: ${response.status}`);
 
-      if (!response.ok) throw new Error(`Tavily error: ${response.status}`);
+    const data = await response.json();
+    const results = (data.results || []).map(result => {
+      let type = 'article';
+      const url = result.url.toLowerCase();
 
-      const data = await response.json();
-      const results = (data.results || []).map(result => {
-        let type = 'article';
-        const url = result.url.toLowerCase();
+      if (url.includes('youtube.com') || url.includes('vimeo.com')) {
+        type = 'video';
+      } else if (url.includes('docs.') || url.includes('developer.')) {
+        type = 'documentation';
+      } else if (url.includes('stackoverflow.com')) {
+        type = 'stackoverflow';
+      }
 
-        if (url.includes('youtube.com') || url.includes('vimeo.com')) {
-          type = 'video';
-        } else if (url.includes('docs.') || url.includes('developer.')) {
-          type = 'documentation';
-        } else if (url.includes('stackoverflow.com')) {
-          type = 'stackoverflow';
-        }
+      return {
+        type,
+        title: result.title,
+        url: result.url,
+        description: result.content?.substring(0, 200) || '',
+        metadata: {
+          score: result.score || 0.5,
+          source: new URL(result.url).hostname
+        },
+        rawRelevance: result.score || 0.5
+      };
+    });
 
-        return {
-          type,
-          title: result.title,
-          url: result.url,
-          description: result.content?.substring(0, 200) || '',
-          intent, // Tag with intent
-          metadata: {
-            score: result.score || 0.5,
-            source: new URL(result.url).hostname
-          },
-          rawRelevance: result.score || 0.5
-        };
-      });
+    console.log(`[Tavily] Got ${results.length} results from single batch request`);
+    return results;
 
-      allResults.push(...results);
-      console.log(`[Tavily:${intent}] Got ${results.length} results`);
-
-    } catch (error) {
-      console.error(`[Tavily:${intent}] Error:`, error.message);
-    }
+  } catch (error) {
+    console.error('[Tavily] Batch request error:', error.message);
+    return [];
   }
-
-  return allResults;
 }
 
 
@@ -452,43 +422,18 @@ router.post('/resources', async (req, res) => {
       });
     }
 
-    console.log('[Resources] Starting review-driven resource fetch...');
+    console.log('[Resources] Starting direct review-driven resource fetch...');
 
-    // STEP 1: Extract anchors with review context
-    const { extractAnchors, buildBaselineQueries, expandQueries } = require('./resource-pipeline');
-    const anchors = extractAnchors(codeContext, sourceCode, reviewResponse);
-
-    // SHORT-CIRCUIT: Return minimal results for trivial code
-    if (anchors.metadata.shortCircuit) {
-      console.log('[Resources] Short-circuit: returning minimal results');
-      return res.json({
-        success: true,
-        resources: [],
-        metadata: {
-          shortCircuit: true,
-          reason: anchors.metadata.reason,
-          message: 'Code is too simple for resource recommendations'
-        }
-      });
-    }
-
-    // STEP 2: Build baseline queries
-    const baselineQueries = buildBaselineQueries(anchors);
-
-    // STEP 3: Build review context (for expansion only)
+    // STEP 1: Build learning strategy (for ranking and context)
     const buildResourceReviewContext = req.app.locals.buildResourceReviewContext;
-    const reviewContext = await buildResourceReviewContext(codeContext, sourceCode, userIntent);
+    const learningStrategy = await buildResourceReviewContext(codeContext, sourceCode, userIntent);
 
-    // STEP 4: Expand queries (with hard disable check)
-    const allQueries = await expandQueries(baselineQueries, reviewContext, codeContext, anchors);
+    // STEP 2: Generate search queries directly from review and context
+    const allQueries = await buildSearchQueries(reviewResponse, codeContext, sourceCode, userIntent);
 
-    console.log(`[Resources] Generated ${allQueries.length} queries`, {
-      baseline: baselineQueries.length,
-      expansion: allQueries.length - baselineQueries.length,
-      expansionDisabled: anchors.metadata.expansionDisabled
-    });
+    console.log(`[Resources] Generated ${allQueries.length} direct queries`);
 
-    // STEP 5: Route queries to appropriate search engines
+    // STEP 3: Route queries to appropriate search engines
     const fetchPromises = [];
     const mdnQueries = allQueries.filter(q => q.searchEngine === 'mdn');
     const tavilyQueries = allQueries.filter(q => q.searchEngine === 'tavily');
@@ -531,12 +476,12 @@ router.post('/resources', async (req, res) => {
 
     console.log(`[Resources] Fetched ${uniqueResources.length} unique resources`);
 
-    // STEP 6: Prune before ranking
+    // STEP 4: Prune before ranking
     const { pruneForRanking } = require('./resource-pipeline');
     const prunedResources = pruneForRanking(uniqueResources, 15);
 
-    // STEP 7: Rank with LLM
-    const rankedResources = await rankResourcesWithLLM(prunedResources, reviewContext);
+    // STEP 5: Rank with LLM using the learning strategy
+    const rankedResources = await rankResourcesWithLLM(prunedResources, learningStrategy);
 
     // Sort and take top 25
     const topResources = rankedResources
@@ -551,13 +496,10 @@ router.post('/resources', async (req, res) => {
       metadata: {
         totalFetched: uniqueResources.length,
         totalReturned: topResources.length,
+        learningGoal: learningStrategy.learningGoal,
         pipeline: {
-          anchorCount: anchors.metadata.totalAnchors,
-          hasConcreteSymbols: anchors.metadata.hasConcreteSymbols,
-          reviewQuality: anchors.metadata.reviewQuality,
-          baselineQueries: baselineQueries.length,
-          expandedQueries: allQueries.length - baselineQueries.length,
-          expansionDisabled: anchors.metadata.expansionDisabled,
+          type: 'direct-review-driven',
+          totalQueries: allQueries.length,
           resourcesPruned: uniqueResources.length - prunedResources.length,
           resourcesRanked: prunedResources.length
         },
@@ -587,4 +529,4 @@ router.post('/resources', async (req, res) => {
   }
 });
 
-module.exports = router;
+module.exports = router; module.exports.buildSearchQueries = buildSearchQueries;

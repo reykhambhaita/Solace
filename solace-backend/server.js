@@ -142,7 +142,7 @@ function buildBasicResourceContext(codeContext) {
 // Export for use in resources.js
 app.locals.buildResourceReviewContext = buildResourceReviewContext;
 
-const { extractAnchors, buildBaselineQueries, expandQueries, pruneForRanking } = require('./routes/resource-pipeline');
+const { pruneForRanking } = require('./routes/resource-pipeline');
 
 
 app.use('/api', resourcesRouter);
@@ -403,7 +403,7 @@ No explanations, no thinking, no extra text.
 REQUIRED JSON SCHEMA:
 {
 "complexity": "string - Describe time and space complexity using Big-O notation. Explicitly distinguish between worst-case and amortized complexity when applicable. Use full sentences and include both analyses if they differ. . NO ordinals, indexes, or section numbers.",
-  "purpose": "string - Describe whether code clearly expresses its purpose and if naming is semantically meaningful. . NO ordinals, indexes, or section numbers.",
+  "purpose": "string - Describe code's clear purpose in about 5 sentences. NO ordinals, indexes, or section numbers.",
   "behavioral": "string - Full sentence analysis of behavioral correctness, race conditions, and edge case handling. . NO ordinals, indexes, or section numbers.",
   "risks": "string - Full sentence description of hidden risks including magic values, silent behaviors, state mutations, or error handling gaps. Use exactly 'No issues found.' if none exist. NO ordinals, indexes, or section numbers.",
   "edgeCases": "string - Full sentence description of edge cases and boundary conditions including input validation, null handling, and concurrency issues. Use exactly 'No issues found.' if none exist. NO ordinals, indexes, or section numbers.",
@@ -420,7 +420,6 @@ STRICTLY FORBIDDEN:
 - Thinking tags or meta-commentary
 
 STRICTLY REQUIRED:
-- Each field must contain at least one complete, grammatically correct sentence
 - Use exactly "No issues found." when a category has no findings
 - Only output valid JSON matching the schema above
 - All content must be semantic and actionable, not structural references

@@ -88,31 +88,28 @@ export default function ResourceFetcher(props: ResourceFetcherProps) {
     setMetadata(null);
 
     try {
-      let currentReviewResponse = props.reviewResult;
+      // Always fetch a fresh review for the current code to avoid stale data
+      console.log('[Resources] Fetching fresh review for current code...');
+      const reviewRes = await fetch(`${BACKEND_URL}/api/review`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          reviewIR: codeContext.reviewIR,
+          codeContext: codeContext,
+          fileContents: sourceCode
+        })
+      });
 
-      if (!currentReviewResponse) {
-        console.log('[Resources] No review found, triggering auto-review...');
-        const reviewRes = await fetch(`${BACKEND_URL}/api/review`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            reviewIR: codeContext.reviewIR,
-            codeContext: codeContext,
-            fileContents: sourceCode
-          })
-        });
+      if (!reviewRes.ok) {
+        const errorData = await reviewRes.json().catch(() => ({}));
+        throw new Error(`Review Failed: ${errorData.error || reviewRes.statusText}`);
+      }
 
-        if (!reviewRes.ok) {
-          const errorData = await reviewRes.json().catch(() => ({}));
-          throw new Error(`Review Failed: ${errorData.error || reviewRes.statusText}`);
-        }
+      const reviewData = await reviewRes.json();
+      const currentReviewResponse = reviewData.review;
 
-        const reviewData = await reviewRes.json();
-        currentReviewResponse = reviewData.review;
-
-        if (props.onReviewUpdate) {
-          props.onReviewUpdate(reviewData.review, reviewData.metadata);
-        }
+      if (props.onReviewUpdate) {
+        props.onReviewUpdate(reviewData.review, reviewData.metadata);
       }
 
       const response = await fetch(`${BACKEND_URL}/api/resources`, {
@@ -219,7 +216,7 @@ export default function ResourceFetcher(props: ResourceFetcherProps) {
       <div className="border-b border-border/50 glass-subtle p-4 space-y-4">
         <div>
           <div className="flex items-center gap-2 mb-1">
-            <div className="flex h-6 w-6 items-center justify-center rounded-lg bg-gradient-to-br from-emerald-500 to-green-500 shadow-sm">
+            <div className="flex h-6 w-6 items-center justify-center rounded-lg bg-linear-to-br from-emerald-500 to-green-500 shadow-sm">
               <BookOpen className="h-3 w-3 text-white" />
             </div>
             <h2 className="text-lg font-semibold text-foreground">Learning Resources</h2>
@@ -355,7 +352,7 @@ export default function ResourceFetcher(props: ResourceFetcherProps) {
               >
                 <div className="relative mx-auto mb-6">
                   <div className="absolute inset-0 rounded-full bg-emerald-500/20 blur-xl animate-pulse" />
-                  <div className="relative flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-emerald-500 to-green-500 shadow-lg shadow-emerald-500/25">
+                  <div className="relative flex h-16 w-16 items-center justify-center rounded-2xl bg-linear-to-br from-emerald-500 to-green-500 shadow-lg shadow-emerald-500/25">
                     <Search className="h-8 w-8 text-white animate-pulse" />
                   </div>
                 </div>
@@ -392,7 +389,7 @@ export default function ResourceFetcher(props: ResourceFetcherProps) {
             >
               {filteredResources.map((resource, index) => {
                 const styles = getTypeStyles(resource.type);
-                
+
                 return (
                   <motion.div
                     key={`${resource.type}-${resource.url}-${index}`}
@@ -401,7 +398,7 @@ export default function ResourceFetcher(props: ResourceFetcherProps) {
                   >
                     <div className="flex items-start gap-4">
                       {/* Icon */}
-                      <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br ${styles.gradient} shadow-lg`}>
+                      <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-linear-to-br ${styles.gradient} shadow-lg`}>
                         {getTypeIcon(resource.type)}
                         <span className="sr-only">{resource.type}</span>
                       </div>
