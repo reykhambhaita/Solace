@@ -1033,7 +1033,7 @@ export function useCodeContext(code: string): {
 
     debounceTimerRef.current = setTimeout(() => {
       analyze();
-    }, 300);
+    }, 600);
 
     return () => {
       if (debounceTimerRef.current) {

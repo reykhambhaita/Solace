@@ -115,7 +115,7 @@ Generate learning strategy JSON.`;
     const jsonMatch = content.match(/\{[\s\S]*\}/);
     const reviewContext = jsonMatch ? JSON.parse(jsonMatch[0]) : buildBasicResourceContext(codeContext);
 
-    console.log('[Review] Generated constrained context');
+    console.log(`[${new Date().toISOString()}] [Review] Generated constrained context`);
     return reviewContext;
 
   } catch (error) {
@@ -201,10 +201,10 @@ async function executeCode(code, language) {
 
   try {
     await fs.writeFile(filepath, code, 'utf8');
-    console.log(`Code written to: ${filepath}`);
+    console.log(`[${new Date().toISOString()}] Code written to: ${filepath}`);
 
     const dockerCommand = buildDockerCommand(filepath, filename, language);
-    console.log(`Executing: ${dockerCommand}`);
+    console.log(`[${new Date().toISOString()}] Executing: ${dockerCommand}`);
 
     const result = await runDockerCommand(dockerCommand);
     const executionTime = Date.now() - startTime;
@@ -219,7 +219,7 @@ async function executeCode(code, language) {
   } finally {
     try {
       await fs.unlink(filepath);
-      console.log(`Cleaned up: ${filepath}`);
+      console.log(`[${new Date().toISOString()}] Cleaned up: ${filepath}`);
     } catch (err) {
       console.error(`Cleanup failed for ${filepath}:`, err.message);
     }
@@ -250,6 +250,7 @@ function getRunCommand(language, filename) {
     'c': `gcc /usercode/${filename} -o /tmp/program -lm && /tmp/program`,
     'ruby': `ruby /usercode/${filename}`,
     'php': `php /usercode/${filename}`,
+    'rust': `rustc /usercode/${filename} -o /tmp/program && /tmp/program`,
   };
 
   if (!commands[language]) {
@@ -269,6 +270,7 @@ function getFileExtension(language) {
     'c': 'c',
     'ruby': 'rb',
     'php': 'php',
+    'rust': 'rs',
   };
 
   return extensions[language] || 'txt';
@@ -282,12 +284,22 @@ function runDockerCommand(command) {
     }, (error, stdout, stderr) => {
 
       if (error && error.killed) {
+        console.warn(`[${new Date().toISOString()}] Execution timeout: ${command.substring(0, 100)}...`);
         resolve({
           stdout: stdout || '',
           stderr: 'Execution timeout (10 seconds exceeded)',
           exitCode: 124
         });
         return;
+      }
+
+      if (error || stderr) {
+        console.log(`[${new Date().toISOString()}] Execution finished with error/stderr.`);
+        if (stdout) console.log(`[${new Date().toISOString()}] STDOUT: ${stdout.substring(0, 500)}${stdout.length > 500 ? '...' : ''}`);
+        if (stderr) console.error(`[${new Date().toISOString()}] STDERR: ${stderr.substring(0, 500)}${stderr.length > 500 ? '...' : ''}`);
+      } else {
+        console.log(`[${new Date().toISOString()}] Execution finished successfully.`);
+        if (stdout) console.log(`[${new Date().toISOString()}] STDOUT: ${stdout.substring(0, 500)}${stdout.length > 500 ? '...' : ''}`);
       }
 
       resolve({
@@ -304,19 +316,19 @@ function runDockerCommand(command) {
 // =============================================================================
 
 app.post('/api/review', async (req, res) => {
-  console.log('[Review] Request received');
+  console.log(`[${new Date().toISOString()}] [Review] Request received`);
 
   const { reviewIR, codeContext, prunedTree, fileContents } = req.body;
 
   if (!reviewIR || !fileContents) {
-    console.log('[Review] Missing required fields');
+    console.log(`[${new Date().toISOString()}] [Review] Missing required fields`);
     return res.status(400).json({
       error: 'Missing required fields: reviewIR and fileContents'
     });
   }
 
   if (!GROQ_API_KEY) {
-    console.log('[Review] GROQ_API_KEY not configured');
+    console.log(`[${new Date().toISOString()}] [Review] GROQ_API_KEY not configured`);
     return res.status(500).json({
       error: 'GROQ_API_KEY not configured',
       message: 'Please set GROQ_API_KEY environment variable'
@@ -598,19 +610,19 @@ function parseReviewResponse(response) {
 // =============================================================================
 
 app.post('/api/translate', async (req, res) => {
-  console.log('[Translation] Request received');
+  console.log(`[${new Date().toISOString()}] [Translation] Request received`);
 
   const { sourceCode, sourceLanguage, targetLanguage, reviewIR } = req.body;
 
   if (!sourceCode || !sourceLanguage || !targetLanguage || !reviewIR) {
-    console.log('[Translation] Missing required fields');
+    console.log(`[${new Date().toISOString()}] [Translation] Missing required fields`);
     return res.status(400).json({
       error: 'Missing required fields: sourceCode, sourceLanguage, targetLanguage, reviewIR'
     });
   }
 
   if (!GROQ_API_KEY) {
-    console.log('[Translation] GROQ_API_KEY not configured');
+    console.log(`[${new Date().toISOString()}] [Translation] GROQ_API_KEY not configured`);
     return res.status(500).json({
       error: 'GROQ_API_KEY not configured',
       message: 'Please set GROQ_API_KEY environment variable'

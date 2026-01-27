@@ -7,12 +7,6 @@ import { TranslationViewer } from "@/components/TranslationViewer";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import {
   Select,
   SelectContent,
   SelectItem,
@@ -35,7 +29,6 @@ import {
   ArrowRightLeft,
   BookOpen,
   Brain,
-  ChevronDown,
   Code2,
   Cpu,
   Loader2,
@@ -45,11 +38,10 @@ import {
   Sparkles,
   Sun,
   Terminal,
-  Zap,
+  Zap
 } from "lucide-react";
 import { useTheme } from "next-themes";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ModeToggle } from "./mode-toggle";
 
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3001';
 
@@ -62,7 +54,8 @@ function BackgroundOrbs() {
         className="absolute -top-40 -left-40 w-96 h-96 rounded-full animate-orb-1 opacity-30 dark:opacity-20"
         style={{
           background: 'radial-gradient(circle, oklch(0.65 0.28 280 / 0.4) 0%, transparent 70%)',
-          filter: 'blur(60px)',
+          filter: 'blur(20px)',
+          willChange: 'transform',
         }}
       />
       {/* Secondary orb - cyan */}
@@ -70,7 +63,8 @@ function BackgroundOrbs() {
         className="absolute top-1/4 -right-20 w-80 h-80 rounded-full animate-orb-2 opacity-25 dark:opacity-15"
         style={{
           background: 'radial-gradient(circle, oklch(0.75 0.22 195 / 0.4) 0%, transparent 70%)',
-          filter: 'blur(50px)',
+          filter: 'blur(15px)',
+          willChange: 'transform',
         }}
       />
       {/* Tertiary orb - green/teal */}
@@ -78,7 +72,8 @@ function BackgroundOrbs() {
         className="absolute -bottom-20 left-1/3 w-72 h-72 rounded-full animate-orb-3 opacity-20 dark:opacity-15"
         style={{
           background: 'radial-gradient(circle, oklch(0.8 0.22 145 / 0.35) 0%, transparent 70%)',
-          filter: 'blur(45px)',
+          filter: 'blur(15px)',
+          willChange: 'transform',
         }}
       />
       {/* Accent orb - warm orange */}
@@ -86,8 +81,9 @@ function BackgroundOrbs() {
         className="absolute top-1/2 left-1/4 w-64 h-64 rounded-full animate-orb-2 opacity-15 dark:opacity-10"
         style={{
           background: 'radial-gradient(circle, oklch(0.75 0.2 35 / 0.3) 0%, transparent 70%)',
-          filter: 'blur(40px)',
+          filter: 'blur(15px)',
           animationDelay: '-5s',
+          willChange: 'transform',
         }}
       />
     </div>
@@ -166,7 +162,7 @@ export default function CodeEditor() {
 
   // Check which languages need backend (Docker)
   const canRunOnBackend = (lang: string): boolean => {
-    return ['python', 'java', 'go', 'cpp', 'c', 'ruby', 'php'].includes(lang);
+    return ['python', 'java', 'go', 'cpp', 'c', 'ruby', 'php', 'rust'].includes(lang);
   };
 
   const getExecutionType = (lang: string): 'client' | 'server' | 'none' => {
@@ -395,7 +391,7 @@ export default function CodeEditor() {
     { value: 'c', label: 'C', group: 'Server' },
     { value: 'ruby', label: 'Ruby', group: 'Server' },
     { value: 'php', label: 'PHP', group: 'Server' },
-    { value: 'rust', label: 'Rust', group: 'Analysis Only' },
+    { value: 'rust', label: 'Rust', group: 'Server' },
   ];
 
   const targetLanguages = [
@@ -490,8 +486,8 @@ export default function CodeEditor() {
                 <ArrowRightLeft className="h-4 w-4" />
               </div>
 
-              <Select 
-                value={targetLanguage} 
+              <Select
+                value={targetLanguage}
                 onValueChange={(val) => {
                   setTargetLanguage(val);
                   resetTranslation();
@@ -753,7 +749,8 @@ export default function CodeEditor() {
                   scrollbar: {
                     vertical: "visible",
                     useShadows: false,
-                    verticalScrollbarSize: 10,
+                    verticalScrollbarSize: 12,
+                    horizontalScrollbarSize: 12,
                   },
                   overviewRulerLanes: 0,
                 }}
