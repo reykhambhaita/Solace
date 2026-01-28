@@ -41,6 +41,10 @@ interface ResourceFetcherProps {
   codeContext: any;
   isAnalyzing: boolean;
   sourceCode: string;
+  resources: Resource[];
+  setResources: (resources: Resource[]) => void;
+  metadata: any;
+  setMetadata: (metadata: any) => void;
   reviewResult?: any;
   onReviewUpdate?: (review: any, metadata: any) => void;
 }
@@ -63,13 +67,12 @@ const itemVariants = {
 };
 
 export default function ResourceFetcher(props: ResourceFetcherProps) {
-  const { codeContext, isAnalyzing, sourceCode } = props;
-  const [resources, setResources] = useState<Resource[]>([]);
+  const { codeContext, isAnalyzing, sourceCode, resources, setResources, metadata, setMetadata } = props;
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [activeFilter, setActiveFilter] = useState<'all' | 'github' | 'stackoverflow' | 'documentation' | 'video'>('all');
   const [userIntent, setUserIntent] = useState('');
-  const [metadata, setMetadata] = useState<any>(null);
+  const [lastFetchCode, setLastFetchCode] = useState('');
 
   const fetchResources = async () => {
     if (!codeContext) {
@@ -84,8 +87,7 @@ export default function ResourceFetcher(props: ResourceFetcherProps) {
 
     setIsLoading(true);
     setError(null);
-    setResources([]);
-    setMetadata(null);
+
 
     try {
       // Always fetch a fresh review for the current code to avoid stale data
@@ -134,6 +136,7 @@ export default function ResourceFetcher(props: ResourceFetcherProps) {
       if (data.success && data.resources) {
         setResources(data.resources);
         setMetadata(data.metadata);
+        setLastFetchCode(sourceCode);
       } else {
         throw new Error('Invalid response from server');
       }
@@ -241,15 +244,21 @@ export default function ResourceFetcher(props: ResourceFetcherProps) {
           <Button
             onClick={fetchResources}
             disabled={isLoading || isAnalyzing || !codeContext}
-            variant="neon"
-            className="gap-2"
+            variant={sourceCode !== lastFetchCode && resources.length > 0 ? "default" : "neon"}
+            className="gap-2 relative"
           >
             {isLoading ? (
               <Loader2 className="h-4 w-4 animate-spin" />
             ) : (
               <Search className="h-4 w-4" />
             )}
-            {isLoading ? 'Fetching...' : 'Find Resources'}
+            {isLoading ? 'Fetching...' : sourceCode !== lastFetchCode && resources.length > 0 ? 'Refresh Resources' : 'Find Resources'}
+            {sourceCode !== lastFetchCode && resources.length > 0 && (
+              <span className="absolute -top-1 -right-1 flex h-3 w-3">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>
+              </span>
+            )}
           </Button>
         </div>
 
@@ -325,7 +334,7 @@ export default function ResourceFetcher(props: ResourceFetcherProps) {
       </div>
 
       {/* Content */}
-      <ScrollArea className="flex-1">
+      <ScrollArea className="flex-1 min-h-0">
         <div className="p-4">
           {error ? (
             <motion.div
@@ -377,6 +386,22 @@ export default function ResourceFetcher(props: ResourceFetcherProps) {
                 <h3 className="text-lg font-semibold text-foreground mb-2">No Resources Yet</h3>
                 <p className="text-sm text-muted-foreground">
                   Write some code and click "Find Resources" to get AI-curated learning materials.
+                </p>
+              </motion.div>
+            </div>
+          ) : filteredResources.length === 0 ? (
+            <div className="flex flex-col items-center justify-center h-64">
+              <motion.div
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                className="text-center max-w-sm"
+              >
+                <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-muted/50 border border-border/50">
+                  <Search className="h-8 w-8 text-muted-foreground" />
+                </div>
+                <h3 className="text-lg font-semibold text-foreground mb-2">No {activeFilter === 'all' ? '' : activeFilter.charAt(0).toUpperCase() + activeFilter.slice(1)} Resources</h3>
+                <p className="text-sm text-muted-foreground">
+                  Try a different filter or fetch new resources.
                 </p>
               </motion.div>
             </div>

@@ -141,6 +141,8 @@ export default function CodeEditor() {
   const [reviewResult, setReviewResult] = useState<any>(null);
   const [reviewError, setReviewError] = useState<string | null>(null);
   const [reviewMetadata, setReviewMetadata] = useState<any>(null);
+  const [resources, setResources] = useState<any[]>([]);
+  const [resourceMetadata, setResourceMetadata] = useState<any>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const rightPanelRef = useRef<HTMLDivElement>(null);
   const [targetLanguage, setTargetLanguage] = useState<string>("python");
@@ -440,8 +442,8 @@ export default function CodeEditor() {
               transition={{ type: "spring", stiffness: 400 }}
             >
               <div className="relative">
-                <div className="absolute inset-0 bg-gradient-to-br from-violet-500 to-cyan-500 rounded-lg blur-md opacity-50" />
-                <div className="relative flex h-9 w-9 items-center justify-center rounded-lg bg-gradient-to-br from-violet-500 to-cyan-500 shadow-lg">
+                <div className="absolute inset-0 bg-linear-to-br from-violet-500 to-cyan-500 rounded-lg blur-md opacity-50" />
+                <div className="relative flex h-9 w-9 items-center justify-center rounded-lg bg-linear-to-br from-violet-500 to-cyan-500 shadow-lg">
                   <Cpu className="h-5 w-5 text-white" />
                 </div>
               </div>
@@ -877,7 +879,10 @@ export default function CodeEditor() {
                       codeContext={codeContext}
                       isAnalyzing={isAnalyzing}
                       sourceCode={code}
-                      reviewResult={reviewResult}
+                      resources={resources}
+                      setResources={setResources}
+                      metadata={resourceMetadata}
+                      setMetadata={setResourceMetadata}
                       onReviewUpdate={(review, metadata) => {
                         setReviewResult(review);
                         setReviewMetadata(metadata);

@@ -169,6 +169,35 @@ export interface ControlFlowComplexity {
   linearity: number; // 0-1, higher = more linear
   cyclomaticComplexity: number;
 }
+
+/**
+ * Data flow analysis results
+ */
+export interface DataFlowAnalysis {
+  definitions: VariableDefinition[];
+  usages: VariableUsage[];
+}
+
+export interface VariableDefinition {
+  name: string;
+  type?: string;
+  isInitialValue: boolean;
+  location: { row: number; column: number };
+}
+
+export interface VariableUsage {
+  name: string;
+  location: { row: number; column: number };
+  isMutating: boolean;
+}
+
+/**
+ * Internal dependency graph
+ */
+export interface DependencyGraph {
+  nodes: string[]; // function names
+  edges: Array<{ from: string; to: string }>;
+}
 /**
  * Domain-specific token mappings
  */
@@ -250,7 +279,7 @@ export const SEMANTIC_VALUE_PATTERNS = {
  */
 export function mapToDomainTokens(magicValues: MagicValue[]): Array<MagicValue & { domainToken?: DomainToken }> {
   return magicValues.map(mv => {
-    for (const [domain, tokens] of Object.entries(DOMAIN_TOKEN_TABLES)) {
+    for (const tokens of Object.values(DOMAIN_TOKEN_TABLES)) {
       const match = tokens.find(t =>
         t.literal.toLowerCase() === mv.value.toString().toLowerCase()
       );
@@ -456,6 +485,92 @@ export function analyzeControlFlowComplexity(cst: CSTNode): ControlFlowComplexit
   };
 }
 
+/**
+ * Analyze data flow (definitions and usages)
+ */
+export function analyzeDataFlow(cst: CSTNode): DataFlowAnalysis {
+  const definitions: VariableDefinition[] = [];
+  const usages: VariableUsage[] = [];
+
+  function traverse(node: CSTNode) {
+    const text = node.text.trim();
+
+    // Heuristic for definitions
+    if (node.type.includes('declaration') || node.type.includes('definition')) {
+      const identifier = node.children.find(c => c.type.includes('identifier') || c.type === 'name');
+      if (identifier) {
+        definitions.push({
+          name: identifier.text,
+          isInitialValue: node.text.includes('='),
+          location: identifier.startPosition
+        });
+      }
+    }
+
+    // Heuristic for usages/mutations
+    if (node.type === 'identifier' || node.type === 'name') {
+      const parent = node.parent;
+      if (parent) {
+        const isAssignment = parent.type.includes('assignment') || parent.type === 'update_expression';
+        const isLeftHandSide = parent.children[0] === node;
+
+        usages.push({
+          name: text,
+          location: node.startPosition,
+          isMutating: isAssignment && isLeftHandSide
+        });
+      }
+    }
+
+    node.children.forEach(traverse);
+  }
+
+  traverse(cst);
+  return { definitions, usages };
+}
+
+/**
+ * Analyze internal dependency graph
+ */
+export function analyzeDependencyGraph(cst: CSTNode): DependencyGraph {
+  const nodes = new Set<string>();
+  const edges: Array<{ from: string; to: string }> = [];
+
+  // 1. Find all function definitions
+  const functionDefs = findNodes(cst, n =>
+    n.type.includes('function_declaration') ||
+    n.type.includes('method_definition') ||
+    n.type.includes('function_definition')
+  );
+
+  const functionMap = new Map<string, CSTNode>();
+
+  functionDefs.forEach(node => {
+    const nameNode = node.children.find(c => c.type.includes('identifier') || c.type === 'name');
+    if (nameNode) {
+      const name = nameNode.text;
+      nodes.add(name);
+      functionMap.set(name, node);
+    }
+  });
+
+  // 2. Find calls within each function
+  functionMap.forEach((node, callerName) => {
+    const calls = findNodes(node, n => n.type.includes('call'));
+    calls.forEach(callNode => {
+      const calleeNode = callNode.children.find(c => c.type.includes('identifier') || c.type === 'name');
+      if (calleeNode && nodes.has(calleeNode.text)) {
+        edges.push({ from: callerName, to: calleeNode.text });
+      }
+    });
+  });
+
+  return {
+    nodes: Array.from(nodes),
+    edges
+  };
+}
+
 interface MagicValueContext {
   nearbyText: string;
   parentType: string;
@@ -464,7 +579,7 @@ interface MagicValueContext {
 }
 
 function getMagicValueContext(node: CSTNode): MagicValueContext {
-  let parent = node.parent;
+  const parent = node.parent;
   let nearbyText = '';
   let isInCondition = false;
   let isInLoop = false;
@@ -530,7 +645,7 @@ export function detectMagicValues(
 
       if (!seenValues.has(value)) {
         // Enhanced semantic role detection
-        let semanticRole = detectStringSemanticRole(value, context);
+        const semanticRole = detectStringSemanticRole(value, context);
 
         // Only report if it's truly a "magic" value
         if (semanticRole && !isWellKnownConstant(value)) {
@@ -763,12 +878,12 @@ export function analyzeSideEffectCertainty(
   cst: CSTNode,
   externalInteractions: string[]
 ): SideEffectCertainty {
-  const text = cst.text.toLowerCase();
-
   // External side effects
   if (externalInteractions.length > 0) {
     return 'external-confirmed';
   }
+
+  const text = cst.text.toLowerCase();
 
   // Look for I/O operations
   const ioPatterns = [
@@ -877,33 +992,33 @@ export function normalizeControlFlow(
   };
 
   // Map language-specific constructs to normalized types
-  if (isIfStatement(cst, language)) {
+  if (isIfStatement(cst)) {
     normalized.type = 'branch';
-    normalized.condition = extractCondition(cst, language);
+    normalized.condition = extractCondition(cst);
 
     // Process branches
-    const branches = extractBranches(cst, language);
+    const branches = extractBranches(cst);
     normalized.children = branches.map(b => normalizeControlFlow(b, language));
   }
-  else if (isLoopStatement(cst, language)) {
+  else if (isLoopStatement(cst)) {
     normalized.type = 'loop';
-    normalized.condition = extractCondition(cst, language);
+    normalized.condition = extractCondition(cst);
 
-    const body = extractLoopBody(cst, language);
+    const body = extractLoopBody(cst);
     if (body) {
       normalized.children = [normalizeControlFlow(body, language)];
     }
   }
-  else if (isErrorHandling(cst, language)) {
+  else if (isErrorHandling(cst)) {
     normalized.type = 'error-handling';
 
     // Extract try/catch/finally or error check patterns
-    const handlers = extractErrorHandlers(cst, language);
+    const handlers = extractErrorHandlers(cst);
     normalized.children = handlers.map(h => normalizeControlFlow(h, language));
   }
-  else if (isFunctionCall(cst, language)) {
+  else if (isFunctionCall(cst)) {
     normalized.type = 'call';
-    normalized.body = extractCallTarget(cst, language);
+    normalized.body = extractCallTarget(cst);
   }
   else {
     // Process children as sequence
@@ -919,40 +1034,40 @@ export function normalizeControlFlow(
 
 // Helper functions for normalization:
 
-function isIfStatement(node: CSTNode, language: string): boolean {
+function isIfStatement(node: CSTNode): boolean {
   const ifTypes = ['if_statement', 'if_expression', 'conditional_expression'];
   return ifTypes.some(t => node.type.includes(t));
 }
 
-function isLoopStatement(node: CSTNode, language: string): boolean {
+function isLoopStatement(node: CSTNode): boolean {
   const loopTypes = ['for', 'while', 'loop', 'each'];
   return loopTypes.some(t => node.type.toLowerCase().includes(t));
 }
 
-function isErrorHandling(node: CSTNode, language: string): boolean {
+function isErrorHandling(node: CSTNode): boolean {
   const errorTypes = ['try', 'catch', 'except', 'finally', 'error'];
   return errorTypes.some(t => node.type.toLowerCase().includes(t));
 }
 
-function isFunctionCall(node: CSTNode, language: string): boolean {
+function isFunctionCall(node: CSTNode): boolean {
   return node.type.includes('call');
 }
 
 function isControlFlow(node: CSTNode, language: string): boolean {
-  return isIfStatement(node, language) ||
-    isLoopStatement(node, language) ||
-    isErrorHandling(node, language) ||
-    isFunctionCall(node, language);
+  return isIfStatement(node) ||
+    isLoopStatement(node) ||
+    isErrorHandling(node) ||
+    isFunctionCall(node);
 }
 
-function extractCondition(node: CSTNode, language: string): string {
+function extractCondition(node: CSTNode): string {
   const conditionNode = node.children.find(c =>
     c.type.includes('condition') || c.type.includes('test')
   );
   return conditionNode?.text.substring(0, 100) || '';
 }
 
-function extractBranches(node: CSTNode, language: string): CSTNode[] {
+function extractBranches(node: CSTNode): CSTNode[] {
   return node.children.filter(c =>
     c.type.includes('consequence') ||
     c.type.includes('alternative') ||
@@ -960,17 +1075,17 @@ function extractBranches(node: CSTNode, language: string): CSTNode[] {
   );
 }
 
-function extractLoopBody(node: CSTNode, language: string): CSTNode | null {
+function extractLoopBody(node: CSTNode): CSTNode | null {
   return node.children.find(c => c.type.includes('body') || c.type.includes('block')) || null;
 }
 
-function extractErrorHandlers(node: CSTNode, language: string): CSTNode[] {
+function extractErrorHandlers(node: CSTNode): CSTNode[] {
   return node.children.filter(c =>
     c.type.includes('catch') || c.type.includes('except') || c.type.includes('finally')
   );
 }
 
-function extractCallTarget(node: CSTNode, language: string): string {
+function extractCallTarget(node: CSTNode): string {
   const funcNode = node.children.find(c => c.type.includes('function') || c.type === 'identifier');
   return funcNode?.text.substring(0, 50) || '';
 }

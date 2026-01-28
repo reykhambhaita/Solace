@@ -167,57 +167,113 @@ async function fetchGitHub(query) {
 
 async function fetchTavilyByIntent(queries) {
   const TAVILY_API_KEY = process.env.TAVILY_API_KEY;
-  if (!TAVILY_API_KEY) return [];
+  if (!TAVILY_API_KEY) {
+    console.warn('[Tavily] API key not configured');
+    return [];
+  }
 
   if (queries.length === 0) return [];
 
+  const MAX_QUERY_LENGTH = 350; // Tavily limit is 400, leave some buffer
+
   try {
-    // Combine ALL queries into a single search using OR operator
-    const allQueryStrings = queries.slice(0, 10).map(q => q.primary);
-    const combinedQuery = allQueryStrings.join(' OR ');
+    console.log(`[Tavily] Batching ${queries.length} queries into chunked API calls`);
 
-    console.log(`[Tavily] Sending single batch request with ${allQueryStrings.length} queries`);
+    // Split queries into batches that fit within character limit
+    const batches = [];
+    let currentBatch = [];
+    let currentLength = 0;
 
-    const response = await fetch('https://api.tavily.com/search', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        api_key: TAVILY_API_KEY,
-        query: combinedQuery,
-        search_depth: 'advanced',
-        max_results: Math.min(allQueryStrings.length * 2, 20)
-      })
-    });
+    for (const query of queries) {
+      const queryPart = `(${query.primary})`;
+      const addedLength = currentBatch.length > 0 ? queryPart.length + 4 : queryPart.length; // +4 for " OR "
 
-    if (!response.ok) throw new Error(`Tavily error: ${response.status}`);
-
-    const data = await response.json();
-    const results = (data.results || []).map(result => {
-      let type = 'article';
-      const url = result.url.toLowerCase();
-
-      if (url.includes('youtube.com') || url.includes('vimeo.com')) {
-        type = 'video';
-      } else if (url.includes('docs.') || url.includes('developer.')) {
-        type = 'documentation';
-      } else if (url.includes('stackoverflow.com')) {
-        type = 'stackoverflow';
+      if (currentLength + addedLength > MAX_QUERY_LENGTH && currentBatch.length > 0) {
+        // Current batch is full, start a new one
+        batches.push(currentBatch);
+        currentBatch = [query];
+        currentLength = queryPart.length;
+      } else {
+        currentBatch.push(query);
+        currentLength += addedLength;
       }
 
-      return {
-        type,
-        title: result.title,
-        url: result.url,
-        description: result.content?.substring(0, 200) || '',
-        metadata: {
-          score: result.score || 0.5,
-          source: new URL(result.url).hostname
-        },
-        rawRelevance: result.score || 0.5
-      };
+      // Limit to 2 batches maximum
+      if (batches.length >= 2) break;
+    }
+
+    // Add remaining batch
+    if (currentBatch.length > 0 && batches.length < 2) {
+      batches.push(currentBatch);
+    }
+
+    console.log(`[Tavily] Split into ${batches.length} batches: ${batches.map(b => b.length).join(', ')} queries each`);
+
+    // Execute batched requests
+    const batchPromises = batches.map(async (batch, idx) => {
+      // Log individual queries in this batch
+      console.log(`[Tavily] Batch ${idx + 1} contains ${batch.length} queries:`);
+      batch.forEach((q, i) => {
+        console.log(`  ${i + 1}. ${q.primary}`);
+      });
+
+      const batchedQuery = batch.map(q => `(${q.primary})`).join(' OR ');
+
+      console.log(`[Tavily] Batch ${idx + 1} combined query (${batchedQuery.length} chars): ${batchedQuery.substring(0, 100)}...`);
+
+      try {
+        const response = await fetch('https://api.tavily.com/search', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            api_key: TAVILY_API_KEY,
+            query: batchedQuery,
+            search_depth: 'basic',
+            max_results: 10
+          })
+        });
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          console.error(`[Tavily] Batch ${idx + 1} failed (${response.status}):`, errorText);
+          return [];
+        }
+
+        const data = await response.json();
+        return (data.results || []).map(result => {
+          let type = 'article';
+          const url = result.url.toLowerCase();
+
+          if (url.includes('youtube.com') || url.includes('vimeo.com')) {
+            type = 'video';
+          } else if (url.includes('docs.') || url.includes('developer.')) {
+            type = 'documentation';
+          } else if (url.includes('stackoverflow.com')) {
+            type = 'stackoverflow';
+          } else if (url.includes('github.com')) {
+            type = 'github';
+          }
+
+          return {
+            type,
+            title: result.title,
+            url: result.url,
+            description: result.content?.substring(0, 200) || '',
+            metadata: {
+              score: result.score || 0.5,
+              source: new URL(result.url).hostname
+            },
+            rawRelevance: result.score || 0.5
+          };
+        });
+      } catch (err) {
+        console.error(`[Tavily] Batch ${idx + 1} error:`, err.message);
+        return [];
+      }
     });
 
-    console.log(`[Tavily] Got ${results.length} results from single batch request`);
+    const results = (await Promise.all(batchPromises)).flat();
+    console.log(`[Tavily] Got ${results.length} results from ${batches.length} batched API calls (${queries.length} total queries)`);
     return results;
 
   } catch (error) {
@@ -227,11 +283,14 @@ async function fetchTavilyByIntent(queries) {
 }
 
 
+
 /**
  * Fetch MDN documentation
  */
 async function fetchMDN(query, language) {
   try {
+    console.log(`[MDN] Searching for: ${query}`);
+
     // MDN search endpoint
     const searchUrl = `https://developer.mozilla.org/api/v1/search?q=${encodeURIComponent(query)}&locale=en-US`;
 
@@ -246,8 +305,20 @@ async function fetchMDN(query, language) {
     }
 
     const data = await response.json();
+    const docs = (data.documents || []);
 
-    return (data.documents || []).slice(0, 3).map(doc => ({
+    // If we have a very specific query that looks like a method or class,
+    // try to find an exact title match first
+    const exactMatch = docs.find(doc =>
+      doc.title.toLowerCase() === query.toLowerCase() ||
+      doc.title.toLowerCase().includes(`${query.toLowerCase()}()`)
+    );
+
+    const sortedDocs = exactMatch
+      ? [exactMatch, ...docs.filter(d => d.mdn_url !== exactMatch.mdn_url)]
+      : docs;
+
+    return sortedDocs.slice(0, 3).map(doc => ({
       type: 'documentation',
       title: doc.title,
       url: `https://developer.mozilla.org${doc.mdn_url}`,
@@ -255,9 +326,10 @@ async function fetchMDN(query, language) {
       metadata: {
         category: 'mdn-docs',
         popularity: doc.popularity || 0,
-        language: language
+        language: language,
+        score: doc.score || 0
       },
-      rawRelevance: 0.95 // MDN docs are highly relevant
+      rawRelevance: exactMatch && doc.mdn_url === exactMatch.mdn_url ? 0.98 : 0.95
     }));
   } catch (error) {
     console.error('MDN fetch error:', error);
@@ -441,8 +513,9 @@ router.post('/resources', async (req, res) => {
 
     // MDN (JavaScript/TypeScript official docs)
     if (mdnQueries.length > 0) {
-      console.log(`[Resources] Routing ${mdnQueries.length} queries to MDN`);
-      mdnQueries.slice(0, 3).forEach(q => {
+      console.log(`[Resources] Routing ${mdnQueries.length} queries to MDN:`);
+      mdnQueries.slice(0, 6).forEach((q, i) => {
+        console.log(`  MDN ${i + 1}. ${q.primary}`);
         fetchPromises.push(fetchMDN(q.primary, codeContext.language.language));
       });
     }
@@ -455,14 +528,17 @@ router.post('/resources', async (req, res) => {
 
     // Stack Overflow (troubleshooting)
     if (stackOverflowQueries.length > 0) {
-      console.log(`[Resources] Routing ${stackOverflowQueries.length} queries to Stack Overflow`);
-      stackOverflowQueries.slice(0, 3).forEach(q => {
+      console.log(`[Resources] Routing ${stackOverflowQueries.length} queries to Stack Overflow:`);
+      stackOverflowQueries.slice(0, 3).forEach((q, i) => {
+        console.log(`  SO ${i + 1}. ${q.primary}`);
         fetchPromises.push(fetchStackOverflow(q.primary));
       });
     }
 
     // GitHub (top 3 queries only)
-    allQueries.slice(0, 3).forEach(q => {
+    console.log(`[Resources] Routing ${Math.min(3, allQueries.length)} queries to GitHub:`);
+    allQueries.slice(0, 3).forEach((q, i) => {
+      console.log(`  GitHub ${i + 1}. ${q.primary}`);
       fetchPromises.push(fetchGitHub(q.primary));
     });
 

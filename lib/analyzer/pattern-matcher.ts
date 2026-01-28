@@ -19,6 +19,63 @@ export interface APIUsagePattern {
   replacement?: string;
 }
 
+export interface AbstractPattern {
+  category: 'error-handling' | 'resource-management' | 'concurrency' | 'data-access' | 'api-integration';
+  name: string;
+  description: string;
+  patterns: Partial<Record<SupportedLanguage, RegExp>>;
+}
+
+/**
+ * Cross-language pattern definitions
+ */
+const CROSS_LANGUAGE_PATTERNS: AbstractPattern[] = [
+  {
+    category: 'error-handling',
+    name: 'Manual Error Check',
+    description: 'Manual checking of error results instead of using exceptions',
+    patterns: {
+      go: /if\s+err\s*!=\s*nil/,
+      rust: /\.is_err\(\)|match\s+.*Result/,
+      c: /if\s*\(\s*.*\s*<\s*0\s*\)|if\s*\(\s*.*\s*==\s*NULL\s*\)/,
+      typescript: /if\s*\(\s*error\s*\)/
+    }
+  },
+  {
+    category: 'resource-management',
+    name: 'Safe Resource Handling',
+    description: 'Ensuring resources are cleaned up (try-with-resources, with, defer)',
+    patterns: {
+      java: /try\s*\([\s\S]*?\)\s*\{/,
+      python: /with\s+open|with\s+.*\(/,
+      go: /defer\s+.*close\(/,
+      typescript: /finally\s*\{[\s\S]*?close\(/,
+      cpp: /std::lock_guard|std::unique_lock/
+    }
+  },
+  {
+    category: 'concurrency',
+    name: 'Thread Safety',
+    description: 'Use of synchronization primitives',
+    patterns: {
+      java: /synchronized|ReentrantLock/,
+      go: /sync\.Mutex|sync\.WaitGroup/,
+      cpp: /std::mutex|std::lock_guard/,
+      rust: /Mutex::new|RwLock::new/
+    }
+  },
+  {
+    category: 'data-access',
+    name: 'ORM/Query Pattern',
+    description: 'Database or data store access',
+    patterns: {
+      typescript: /prisma\.|db\.|repository\./,
+      python: /session\.query|models\.\w+\.objects/,
+      java: /@Entity|repository\./
+    }
+  }
+];
+
 /**
  * Language-specific pattern definitions
  */
@@ -348,6 +405,23 @@ export function detectPatterns(
         context: api.deprecated ? 'Deprecated API' : 'API usage detected',
         suggestion: api.replacement
       });
+    }
+  }
+
+  // Detect Cross-Language Patterns
+  for (const abstract of CROSS_LANGUAGE_PATTERNS) {
+    const pattern = abstract.patterns[language];
+    if (pattern) {
+      const match = codeText.match(pattern);
+      if (match) {
+        matches.push({
+          type: 'design-pattern',
+          name: abstract.name,
+          confidence: 0.8,
+          location: findLocation(cst, match[0]),
+          context: abstract.description
+        });
+      }
     }
   }
 

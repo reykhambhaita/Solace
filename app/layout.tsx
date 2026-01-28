@@ -18,12 +18,12 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Solace | AI-Powered Code Analysis",
+  title: "Solace",
   description: "Next-generation code analysis platform with AI-powered review, translation, and learning resources. Analyze, understand, and improve your code with intelligence.",
   keywords: ["code analysis", "AI code review", "code translation", "developer tools", "code quality"],
-  authors: [{ name: "Solace Team" }],
+  authors: [{ name: "Gresha Khambhaita" }],
   openGraph: {
-    title: "Solace | AI-Powered Code Analysis",
+    title: "Solace",
     description: "Next-generation code analysis platform with AI-powered review, translation, and learning resources.",
     type: "website",
   },
@@ -46,7 +46,7 @@ export default function RootLayout({
           disableTransitionOnChange={false}
         >
           {/* Noise texture overlay for premium feel */}
-          <div className="noise-overlay pointer-events-none fixed inset-0 z-[100]" aria-hidden="true" />
+          <div className="noise-overlay pointer-events-none fixed inset-0 z-100" aria-hidden="true" />
           {children}
         </ThemeProvider>
       </body>

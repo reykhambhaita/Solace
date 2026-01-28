@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   analyzeControlFlowComplexity,
+  analyzeDataFlow,
+  analyzeDependencyGraph,
   analyzeSideEffects,
   calculateTestability,
   detectMagicValues,
@@ -8,11 +10,13 @@ import {
   extractDecisionRules,
   mapToDomainTokens,
   type CSTNode,
+  type DataFlowAnalysis,
+  type DependencyGraph,
   type SideEffectAnalysis
 } from '../analyzer/semantic-ir';
 import { useTreeSitter } from '../tree-sitter/use-tree-sitter';
 import { detectCodeType, type CodeTypeResult, type ExecutionContext } from './code-type-detector';
-import { detectLanguage, SupportedLanguage, type LanguageDetectionResult } from './language-detector';
+import { detectLanguage, type LanguageDetectionResult } from './language-detector';
 import { analyzeLibraries, type LibraryAnalysisResult } from './library-analyzer';
 import { analyzeParadigm, type ParadigmAnalysisResult, type ParadigmMixing } from './paradigm-detector';
 export interface CodeContext {
@@ -112,17 +116,27 @@ export interface ReviewIR {
       review: number;
       refactor: number;
       execution: number;
+      explanation: number; // NEW
+      generation: number; // NEW
     };
     focusAreas: string[];
     promptHints: string[];
     warnings: string[];
   };
 
+  // Risks and security
+  riskProfile?: {
+    overallRisk: 'low' | 'medium' | 'high';
+    factors: Array<{ factor: string; risk: string }>;
+  }; // NEW
+
   // Extracted elements
   elements: {
     decisionRules: Array<{ condition: string; outcome: string; location: number }>;
     magicValues: Array<{ value: string | number; role?: string; location: number }>;
     silentBehaviors: Array<{ type: string; risk: string; location: number }>;
+    dataFlow?: DataFlowAnalysis; // FIXED any
+    dependencyGraph?: DependencyGraph; // FIXED any
   };
 
   // Output contract
@@ -413,9 +427,9 @@ function determineLLMRole(
   return { role, promptHints: promptHints.slice(0, 5), focusAreas: focusAreas.slice(0, 4) };
 }
 /**
- * Calculate overall context confidence and warnings
+ * Calculate overall context confidence and warnings with weights and consistency checks
  */
-function calculateContextConfidence(context: CodeContext): ContextConfidence {
+export function calculateContextConfidence(context: CodeContext): ContextConfidence {
   const warnings: string[] = [];
 
   const breakdown = {
@@ -426,9 +440,28 @@ function calculateContextConfidence(context: CodeContext): ContextConfidence {
     executionModel: context.paradigm.executionModel.confidence,
   };
 
+  const weights = {
+    language: 0.35,
+    libraries: 0.1,
+    paradigm: 0.2,
+    codeType: 0.2,
+    executionModel: 0.15
+  };
+
   // Language warnings
   if (breakdown.language < 0.6) {
     warnings.push('Uncertain language detection');
+  }
+
+  // Consistency check: Language vs Paradigm
+  let consistencyScore = 1.0;
+  if (context.language.language === 'java' && context.paradigm.primary.paradigm !== 'object-oriented') {
+    consistencyScore *= 0.7;
+    warnings.push('Paradigm mismatch: Java is primarily Object-Oriented');
+  }
+  if (context.language.language === 'c' && context.paradigm.primary.paradigm === 'object-oriented') {
+    consistencyScore *= 0.6;
+    warnings.push('Paradigm mismatch: C is primarily Procedural');
   }
 
   // Empty or minimal code
@@ -443,14 +476,12 @@ function calculateContextConfidence(context: CodeContext): ContextConfidence {
     breakdown.codeType = 0.3;
   }
 
-  // Execution intent unclear
-  if (context.codeType.executionIntent && !context.codeType.executionIntent.isRunnable &&
-    context.codeType.executionIntent.blockers.length > 0) {
-    warnings.push(`Execution blockers: ${context.codeType.executionIntent.blockers[0]}`);
-  }
+  const weightedSum = Object.keys(breakdown).reduce((sum, key) => {
+    return sum + (breakdown[key as keyof typeof breakdown] * weights[key as keyof typeof weights]);
+  }, 0);
 
-  const overall = Object.values(breakdown).reduce((a, b) => a + b, 0) / Object.keys(breakdown).length;
-  const isLLMReady = overall >= 0.65 && warnings.length < 3;
+  const overall = weightedSum * consistencyScore;
+  const isLLMReady = overall >= 0.7 && warnings.length < 3;
 
   return {
     overall: Math.round(overall * 100) / 100,
@@ -531,10 +562,21 @@ export function toReviewIR(context: CodeContext, cst: CSTNode): ReviewIR {
         review: context.llmContext.readiness.reviewReadiness,
         refactor: context.llmContext.readiness.refactorReadiness,
         execution: context.llmContext.readiness.executionReadiness,
+        explanation: Math.min(1, context.llmContext.readiness.reviewReadiness * 1.2), // NEW
+        generation: Math.min(1, context.llmContext.readiness.refactorReadiness * 0.8), // NEW
       },
       focusAreas: context.llmContext.focusAreas,
       promptHints: context.llmContext.promptHints,
       warnings: context.confidence.warnings,
+    },
+
+    riskProfile: {
+      overallRisk: testability.score < 50 ? 'high' : (sideEffects.hasSideEffects ? 'medium' : 'low'),
+      factors: [
+        { factor: 'testability', risk: testability.score < 50 ? 'high' : 'low' },
+        { factor: 'side-effects', risk: sideEffects.hasSideEffects ? 'medium' : 'low' },
+        { factor: 'complexity', risk: controlFlow.cyclomaticComplexity > 10 ? 'high' : 'low' }
+      ]
     },
 
     elements: {
@@ -553,6 +595,8 @@ export function toReviewIR(context: CodeContext, cst: CSTNode): ReviewIR {
         risk: sb.risk,
         location: sb.location.row,
       })),
+      dataFlow: analyzeDataFlow(cst),
+      dependencyGraph: analyzeDependencyGraph(cst),
     },
 
     outputContract: {
@@ -561,6 +605,40 @@ export function toReviewIR(context: CodeContext, cst: CSTNode): ReviewIR {
       guarantees: context.libraries.outputContract.guarantees,
     },
   };
+}
+
+/**
+ * SANITIZE: ensure logical consistency
+ */
+export function sanitizeAndValidateContext(context: CodeContext): CodeContext {
+  const sanitized = { ...context };
+
+  // 1. Logic check: Language vs Paradigm consistency (reflected in confidence already)
+
+  // 2. Structural consistency
+  if (sanitized.paradigm.patterns.functions === 0 && sanitized.paradigm.patterns.classes === 0) {
+    sanitized.llmContext.readiness.reviewReadiness *= 0.7;
+  }
+
+  return sanitized;
+}
+
+/**
+ * INCREMENTAL: Fast update for context
+ */
+export function analyzeIncrementalContext(
+  code: string,
+  prevContext: CodeContext,
+  cst?: CSTNode
+): CodeContext {
+  // If no change, return previous
+  if (hashCode(code) === hashCode(prevContext.reviewIR.language + prevContext.reviewIR.structure.linesOfCode)) {
+    return prevContext;
+  }
+
+  // For now, always re-analyze if significant, otherwise return prev with updated timestamp
+  // A proper incremental analysis would use tree-sitter edits
+  return analyzeCodeContext(code, cst) || prevContext;
 }
 /**
  * Analyze code context (non-React version)
@@ -752,6 +830,8 @@ export function analyzeCodeContext(
               review: 0,
               refactor: 0,
               execution: 0,
+              explanation: 0,
+              generation: 0,
             },
             focusAreas: [],
             promptHints: ['CST not available - limited analysis'],
@@ -761,6 +841,8 @@ export function analyzeCodeContext(
             decisionRules: [],
             magicValues: [],
             silentBehaviors: [],
+            dataFlow: { definitions: [], usages: [] },
+            dependencyGraph: { nodes: [], edges: [] },
           },
           outputContract: {
             structure: 'unknown',
@@ -817,9 +899,9 @@ export function analyzeCodeContext(
 
     const result: CodeContext = {
       ...baseContext,
-      confidence: null as any,
+      confidence: null as unknown as ContextConfidence,
       llmContext,
-      reviewIR: null as any,
+      reviewIR: null as unknown as ReviewIR,
     };
 
     result.confidence = calculateContextConfidence(result);
@@ -837,65 +919,6 @@ export function analyzeCodeContext(
 }
 
 
-function createMinimalContext(code: string, language: SupportedLanguage): CodeContext {
-  return {
-    language: {
-      language,
-      dialect: null,
-      confidence: 0.5,
-      indicators: ['fallback'],
-      detectionMethod: 'fallback'
-    },
-    libraries: createEmptyLibraryAnalysis(),
-    paradigm: createEmptyParadigmAnalysis(),
-    codeType: {
-      type: 'unknown',
-      confidence: 0,
-      indicators: ['minimal analysis']
-    },
-    analysisTime: 0,
-    confidence: {
-      overall: 0.3,
-      breakdown: {
-        language: 0.5,
-        libraries: 0,
-        paradigm: 0,
-        codeType: 0,
-        executionModel: 0
-      },
-      warnings: ['Minimal analysis - limited context'],
-      isLLMReady: false
-    },
-    llmContext: {
-      role: 'explain',
-      readiness: createEmptyReadiness(),
-      intent: createEmptyIntent(),
-      promptHints: ['Limited context available'],
-      focusAreas: []
-    },
-    reviewIR: createEmptyReviewIR(language)
-  };
-}
-function validateCodeContext(context: Partial<CodeContext>): boolean {
-  // Ensure critical fields exist
-  if (!context.language) {
-    console.warn('[CodeContext] Missing language field');
-    return false;
-  }
-  if (!context.paradigm) {
-    console.warn('[CodeContext] Missing paradigm field');
-    return false;
-  }
-  if (!context.codeType) {
-    console.warn('[CodeContext] Missing codeType field');
-    return false;
-  }
-  if (!context.libraries) {
-    console.warn('[CodeContext] Missing libraries field');
-    return false;
-  }
-  return true;
-}
 
 
 
@@ -992,9 +1015,9 @@ export function useCodeContext(code: string): {
 
       const result: CodeContext = {
         ...baseContext,
-        confidence: null as any, // Will be set next
+        confidence: null as unknown as ContextConfidence,
         llmContext,
-        reviewIR: null as any, // Will be set after
+        reviewIR: null as unknown as ReviewIR,
       };
 
       result.confidence = calculateContextConfidence(result);
@@ -1172,7 +1195,13 @@ function createEmptyReviewIR(language: string): ReviewIR {
     quality: { testability: 0, controlFlowComplexity: 0, errorHandling: 'unknown' },
     guidance: {
       role: 'explain',
-      readinessScores: { review: 0, refactor: 0, execution: 0 },
+      readinessScores: {
+        review: 0,
+        refactor: 0,
+        execution: 0,
+        explanation: 0,
+        generation: 0
+      },
       focusAreas: [],
       promptHints: [],
       warnings: []
@@ -1180,7 +1209,9 @@ function createEmptyReviewIR(language: string): ReviewIR {
     elements: {
       decisionRules: [],
       magicValues: [],
-      silentBehaviors: []
+      silentBehaviors: [],
+      dataFlow: { definitions: [], usages: [] },
+      dependencyGraph: { nodes: [], edges: [] }
     },
     outputContract: {
       structure: 'unknown',
