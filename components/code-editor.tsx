@@ -751,8 +751,8 @@ export default function CodeEditor() {
                   scrollbar: {
                     vertical: "visible",
                     useShadows: false,
-                    verticalScrollbarSize: 12,
-                    horizontalScrollbarSize: 12,
+                    verticalScrollbarSize: 2,
+                    horizontalScrollbarSize: 6,
                   },
                   overviewRulerLanes: 0,
                 }}

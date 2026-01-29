@@ -414,7 +414,7 @@ No explanations, no thinking, no extra text.
 
 REQUIRED JSON SCHEMA:
 {
-"complexity": "string - Describe time and space complexity using Big-O notation. Explicitly distinguish between worst-case and amortized complexity when applicable. Use full sentences and include both analyses if they differ. . NO ordinals, indexes, or section numbers.",
+"complexity": "string - Describe time and space complexity using Big-O notation. Explicitly distinguish between worst-case and amortized complexity when applicable. Treat all function parameters and container inputs as variable-sized symbolic inputs when computing complexity. Do not assume constant-sized literals. Use full sentences and include both analyses if they differ. NO ordinals, indexes, or section numbers.",
   "purpose": "string - Describe code's clear purpose in about 5 sentences. NO ordinals, indexes, or section numbers.",
   "behavioral": "string - Full sentence analysis of behavioral correctness, race conditions, and edge case handling. . NO ordinals, indexes, or section numbers.",
   "risks": "string - Full sentence description of hidden risks including magic values, silent behaviors, state mutations, or error handling gaps. Use exactly 'No issues found.' if none exist. NO ordinals, indexes, or section numbers.",
@@ -424,6 +424,7 @@ REQUIRED JSON SCHEMA:
 
 STRICTLY FORBIDDEN:
 - Ordinal numbers as content (e.g., "2.", "3.", "item 1", "section 2")
+- assuming constant-sized literals
 - Empty strings or whitespace-only values
 - Placeholder text or generic responses
 - Any text outside the JSON object
