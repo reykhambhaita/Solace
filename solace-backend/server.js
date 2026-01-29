@@ -2,11 +2,17 @@ require('dotenv').config();
 
 const express = require('express');
 const cors = require('cors');
-const { exec } = require('child_process');
+const { exec, spawn } = require('child_process');
+const util = require('util');
+const execPromise = util.promisify(exec);
 const fs = require('fs').promises;
+
 const { v4: uuidv4 } = require('uuid');
 const path = require('path');
 const resourcesRouter = require('./routes/resources');
+
+const activeSessions = new Map();
+
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -151,9 +157,31 @@ app.use('/api', resourcesRouter);
 // CODE EXECUTION
 // =============================================================================
 
-// Code execution endpoint (existing)
+app.post('/api/terminal-input', (req, res) => {
+  const { sessionId, input } = req.body;
+
+  if (!sessionId || !activeSessions.has(sessionId)) {
+    return res.status(400).json({ error: 'Invalid session' });
+  }
+
+  const session = activeSessions.get(sessionId);
+
+  if (session.process && !session.process.killed) {
+    try {
+      session.process.stdin.write(input + '\n');
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: 'Failed to write to process' });
+    }
+  } else {
+    res.status(400).json({ error: 'No active process' });
+  }
+});
+
+// Code execution endpoint (enhanced for interactive sessions)
 app.post('/api/execute', async (req, res) => {
-  const { code, language } = req.body;
+  const { code, language, input } = req.body;
+  const sessionId = req.body.sessionId || uuidv4();
 
   if (!code || !language) {
     return res.status(400).json({
@@ -161,84 +189,128 @@ app.post('/api/execute', async (req, res) => {
     });
   }
 
-  console.log(`[${new Date().toISOString()}] Executing ${language} code (${code.length} chars)`);
+  console.log(`[${new Date().toISOString()}] Executing ${language} code (${code.length} chars) - Session: ${sessionId}`);
 
   try {
-    const result = await executeCode(code, language);
-    console.log(`[${new Date().toISOString()}] Execution completed in ${result.executionTime}`);
-    res.json(result);
+    const containerName = `code-exec-${sessionId}`;
+    const codeDir = path.join(__dirname, 'temp', sessionId);
+    await fs.mkdir(codeDir, { recursive: true });
+
+    const extension = getFileExtension(language);
+    const fileName = `main${extension}`;
+    const filePath = path.join(codeDir, fileName);
+    await fs.writeFile(filePath, code);
+
+    // Build container
+    const buildArgs = [
+      'build',
+      '-t', containerName,
+      '-f', 'Dockerfile.runner',
+      '--build-arg', `LANGUAGE=${language}`,
+      codeDir
+    ];
+
+    const buildProcess = spawn('docker', buildArgs);
+
+    await new Promise((resolve, reject) => {
+      let buildError = '';
+      buildProcess.stderr.on('data', (data) => buildError += data.toString());
+      buildProcess.on('close', (code) => {
+        if (code === 0) resolve();
+        else reject(new Error(`Build failed: ${buildError}`));
+      });
+    });
+
+    // Run container with interactive mode
+    const runCommand = getRunCommand(language, fileName);
+    const runArgs = [
+      'run',
+      '--rm',
+      '--name', containerName,
+      '--memory', '256m',
+      '--cpus', '0.5',
+      '--network', 'none',
+      '-i', // Interactive mode
+      containerName,
+      'bash', '-c', runCommand
+    ];
+
+    const runProcess = spawn('docker', runArgs);
+
+    // Store session with output/error buffers
+    activeSessions.set(sessionId, {
+      process: runProcess,
+      startTime: Date.now(),
+      language,
+      output: '',
+      error: '',
+      exitCode: null
+    });
+
+    runProcess.stdout.on('data', (data) => {
+      const session = activeSessions.get(sessionId);
+      if (session) {
+        session.output += data.toString();
+      }
+    });
+
+    runProcess.stderr.on('data', (data) => {
+      const session = activeSessions.get(sessionId);
+      if (session) {
+        session.error += data.toString();
+      }
+    });
+
+    // If initial input provided, send it
+    if (input) {
+      runProcess.stdin.write(input + '\n');
+    }
+
+    // Set timeout for cleanup
+    const timeout = setTimeout(() => {
+      if (!runProcess.killed) {
+        runProcess.kill();
+        activeSessions.delete(sessionId);
+      }
+    }, 60000); // Increased to 60 seconds for interactivity
+
+    runProcess.on('close', (code) => {
+      clearTimeout(timeout);
+
+      const session = activeSessions.get(sessionId);
+      if (session) {
+        session.exitCode = code;
+      }
+
+      // Don't delete session immediately - let polling detect completion
+      setTimeout(() => {
+        activeSessions.delete(sessionId);
+        // Cleanup
+        fs.rm(codeDir, { recursive: true, force: true }).catch(console.error);
+        // Also remove docker image to save space
+        execPromise(`docker rmi ${containerName}`).catch(() => { });
+      }, 5000); // Keep session info for 5 seconds after completion
+    });
+
+    // Return immediately with sessionId
+    res.json({
+      sessionId,
+      output: '',
+      error: '',
+      executionTime: '0ms'
+    });
+
   } catch (error) {
     console.error('Execution error:', error);
+    activeSessions.delete(sessionId);
     res.status(500).json({
-      error: error.message || 'Execution failed',
-      details: error.toString()
+      error: error.message,
+      output: '',
+      exitCode: 1
     });
   }
 });
 
-async function executeCode(code, language) {
-  const startTime = Date.now();
-  const executionId = uuidv4();
-
-  let extension = getFileExtension(language);
-  let filename = `code_${executionId}.${extension}`;
-
-  if (language === 'java') {
-    const classNameMatch = code.match(/(?:public\s+)?class\s+(\w+)/);
-    if (classNameMatch) {
-      filename = `${classNameMatch[1]}.java`;
-    } else {
-      return {
-        output: '',
-        error: 'Error: No valid class declaration found in Java code.\n\nMake sure your code has a class declaration like:\nclass MyClass { ... }\nor\npublic class MyClass { ... }',
-        exitCode: 1,
-        executionTime: '0ms'
-      };
-    }
-  }
-
-  const filepath = path.join('/tmp', filename);
-
-  try {
-    await fs.writeFile(filepath, code, 'utf8');
-    console.log(`[${new Date().toISOString()}] Code written to: ${filepath}`);
-
-    const dockerCommand = buildDockerCommand(filepath, filename, language);
-    console.log(`[${new Date().toISOString()}] Executing: ${dockerCommand}`);
-
-    const result = await runDockerCommand(dockerCommand);
-    const executionTime = Date.now() - startTime;
-
-    return {
-      output: result.stdout || '',
-      error: result.stderr || '',
-      exitCode: result.exitCode,
-      executionTime: `${executionTime}ms`
-    };
-
-  } finally {
-    try {
-      await fs.unlink(filepath);
-      console.log(`[${new Date().toISOString()}] Cleaned up: ${filepath}`);
-    } catch (err) {
-      console.error(`Cleanup failed for ${filepath}:`, err.message);
-    }
-  }
-}
-
-function buildDockerCommand(hostPath, containerFilename, language) {
-  const runCommand = getRunCommand(language, containerFilename);
-
-  return `docker run --rm \
-    --memory="256m" \
-    --cpus="0.5" \
-    --network=none \
-    --read-only \
-    --tmpfs /tmp:rw,exec,nosuid,size=65536k \
-    -v "${hostPath}:/usercode/${containerFilename}:ro" \
-    solace-runner \
-    timeout 10 bash -c "${runCommand}"`;
-}
 
 function getRunCommand(language, filename) {
   const commands = {
@@ -262,56 +334,55 @@ function getRunCommand(language, filename) {
 
 function getFileExtension(language) {
   const extensions = {
-    'javascript': 'js',
-    'python': 'py',
-    'java': 'java',
-    'go': 'go',
-    'cpp': 'cpp',
-    'c': 'c',
-    'ruby': 'rb',
-    'php': 'php',
-    'rust': 'rs',
+    javascript: '.js',
+    python: '.py',
+    java: '.java',
+    cpp: '.cpp',
+    c: '.c',
+    go: '.go',
+    rust: '.rs',
+    php: '.php'
   };
-
-  return extensions[language] || 'txt';
+  return extensions[language] || '.txt';
 }
 
-function runDockerCommand(command) {
-  return new Promise((resolve) => {
-    exec(command, {
-      timeout: 15000,
-      maxBuffer: 1024 * 1024
-    }, (error, stdout, stderr) => {
 
-      if (error && error.killed) {
-        console.warn(`[${new Date().toISOString()}] Execution timeout: ${command.substring(0, 100)}...`);
-        resolve({
-          stdout: stdout || '',
-          stderr: 'Execution timeout (10 seconds exceeded)',
-          exitCode: 124
-        });
-        return;
-      }
 
-      if (error || stderr) {
-        console.log(`[${new Date().toISOString()}] Execution finished with error/stderr.`);
-        if (stdout) console.log(`[${new Date().toISOString()}] STDOUT: ${stdout.substring(0, 500)}${stdout.length > 500 ? '...' : ''}`);
-        if (stderr) console.error(`[${new Date().toISOString()}] STDERR: ${stderr.substring(0, 500)}${stderr.length > 500 ? '...' : ''}`);
-      } else {
-        console.log(`[${new Date().toISOString()}] Execution finished successfully.`);
-        if (stdout) console.log(`[${new Date().toISOString()}] STDOUT: ${stdout.substring(0, 500)}${stdout.length > 500 ? '...' : ''}`);
-      }
+// Session management endpoints
+app.get('/api/session/:sessionId', (req, res) => {
+  const { sessionId } = req.params;
+  const session = activeSessions.get(sessionId);
 
-      resolve({
-        stdout: stdout || '',
-        stderr: stderr || (error ? error.message : ''),
-        exitCode: error ? (error.code || 1) : 0
-      });
-    });
+  if (!session) {
+    return res.json({ active: false });
+  }
+
+  res.json({
+    active: session.exitCode === null,
+    uptime: Date.now() - session.startTime,
+    language: session.language,
+    output: session.output || '',
+    error: session.error || '',
+    exitCode: session.exitCode
   });
-}
+
+});
+
+app.delete('/api/session/:sessionId', (req, res) => {
+  const { sessionId } = req.params;
+  const session = activeSessions.get(sessionId);
+
+  if (session && session.process) {
+    session.process.kill();
+    activeSessions.delete(sessionId);
+    return res.json({ success: true });
+  }
+
+  res.status(404).json({ error: 'Session not found' });
+});
 
 // =============================================================================
+
 // CODE REVIEW
 // =============================================================================
 

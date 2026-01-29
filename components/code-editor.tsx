@@ -3,7 +3,10 @@
 import { CodeContextViewer } from "@/components/CodeContextViewer";
 import { CodeReviewViewer } from "@/components/CodeReviewer";
 import ResourceFetcher from "@/components/ResourceFetcher";
+import { Terminal as TerminalComponent } from "@/components/Terminal";
 import { TranslationViewer } from "@/components/TranslationViewer";
+
+
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -143,6 +146,10 @@ export default function CodeEditor() {
   const [reviewMetadata, setReviewMetadata] = useState<any>(null);
   const [resources, setResources] = useState<any[]>([]);
   const [resourceMetadata, setResourceMetadata] = useState<any>(null);
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [terminalOutput, setTerminalOutput] = useState("");
+  const [terminalError, setTerminalError] = useState("");
+
   const containerRef = useRef<HTMLDivElement>(null);
   const rightPanelRef = useRef<HTMLDivElement>(null);
   const [targetLanguage, setTargetLanguage] = useState<string>("python");
@@ -173,32 +180,7 @@ export default function CodeEditor() {
     return 'none';
   };
 
-  const runCode = async () => {
-    if (!code.trim()) {
-      setOutput("Error: No code to execute");
-      return;
-    }
-
-    setIsRunning(true);
-    setOutput("Executing code...");
-    setActiveTab("output");
-
-    try {
-      if (canRunClientSide(language)) {
-        runCodeClientSide();
-      } else if (canRunOnBackend(language)) {
-        await runCodeOnBackend();
-      } else {
-        setOutput(`Error: Language "${language}" is not supported yet`);
-        setIsRunning(false);
-      }
-    } catch (error) {
-      setOutput(`Unexpected Error: ${error instanceof Error ? error.message : String(error)}`);
-      setIsRunning(false);
-    }
-  };
-
-  const runCodeClientSide = () => {
+  const runCodeClientSide = useCallback(() => {
     try {
       const logs: string[] = [];
       const originalLog = console.log;
@@ -227,14 +209,54 @@ export default function CodeEditor() {
     } finally {
       setIsRunning(false);
     }
-  };
+  }, [code]);
 
-  const runCodeOnBackend = async () => {
+  const pollSession = useCallback((sid: string) => {
+    const pollInterval = setInterval(async () => {
+      try {
+        const response = await fetch(`${BACKEND_URL}/api/session/${sid}`);
+        const data = await response.json();
+
+        // Update output and error
+        if (data.output) {
+          setTerminalOutput(data.output);
+        }
+        if (data.error) {
+          setTerminalError(data.error);
+        }
+
+        // Check if process completed
+        if (!data.active) {
+          clearInterval(pollInterval);
+          setIsRunning(false);
+          setSessionId(null);
+        }
+      } catch (error) {
+        clearInterval(pollInterval);
+        setIsRunning(false);
+      }
+    }, 500); // Poll every 500ms for more responsive output
+
+    return () => clearInterval(pollInterval);
+  }, []);
+
+
+  const runCodeOnBackend = useCallback(async () => {
+    setIsRunning(true);
+    setTerminalOutput("");
+    setTerminalError("");
+    setOutput("Executing code...");
+    setActiveTab("output");
+
     try {
       const response = await fetch(`${BACKEND_URL}/api/execute`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code, language })
+        body: JSON.stringify({
+          code,
+          language,
+          sessionId: sessionId || undefined
+        })
       });
 
       if (!response.ok) {
@@ -242,27 +264,16 @@ export default function CodeEditor() {
       }
 
       const result = await response.json();
-      let formattedOutput = '';
 
-      if (result.output?.trim()) {
-        formattedOutput += `Output:\n${result.output}`;
+      if (result.sessionId) {
+        setSessionId(result.sessionId);
+        // Start polling immediately for output
+        pollSession(result.sessionId);
       }
 
-      if (result.error?.trim()) {
-        formattedOutput += `${formattedOutput ? '\n\n' : ''}Error:\n${result.error}`;
-      }
-
-      if (!result.output && !result.error) {
-        formattedOutput = 'Code executed successfully (no output)';
-      }
-
-      formattedOutput += `\n\n---\nExecution time: ${result.executionTime}`;
-      formattedOutput += `\nExit code: ${result.exitCode}`;
-
-      setOutput(formattedOutput);
     } catch (error) {
       if (error instanceof Error && error.message.includes('Failed to fetch')) {
-        setOutput(
+        setTerminalError(
           `Connection Error: Cannot connect to backend server.\n\n` +
           `Make sure the backend is running:\n` +
           `  cd solace-backend\n` +
@@ -270,12 +281,85 @@ export default function CodeEditor() {
           `Backend URL: ${BACKEND_URL}`
         );
       } else {
-        setOutput(`Error: ${error instanceof Error ? error.message : String(error)}`);
+        setTerminalError(`Error: ${error instanceof Error ? error.message : String(error)}`);
       }
-    } finally {
       setIsRunning(false);
     }
+  }, [code, language, sessionId, pollSession]);
+
+  const runCode = useCallback(async () => {
+    if (!code.trim()) {
+      setOutput("Error: No code to execute");
+      return;
+    }
+
+    setIsRunning(true);
+    setTerminalOutput("");
+    setTerminalError("");
+    setOutput("Executing code...");
+    setActiveTab("output");
+
+    try {
+      if (canRunClientSide(language)) {
+        runCodeClientSide();
+      } else if (canRunOnBackend(language)) {
+        await runCodeOnBackend();
+      } else {
+        setOutput(`Error: Language "${language}" is not supported yet`);
+        setIsRunning(false);
+      }
+    } catch (error) {
+      setOutput(`Unexpected Error: ${error instanceof Error ? error.message : String(error)}`);
+      setIsRunning(false);
+    }
+  }, [code, language, runCodeClientSide, runCodeOnBackend]);
+
+
+
+
+
+  const handleTerminalInput = async (input: string) => {
+    if (!sessionId) {
+      setTerminalError('No active session');
+      return;
+    }
+
+    try {
+      const response = await fetch(`${BACKEND_URL}/api/terminal-input`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          sessionId,
+          input,
+        }),
+      });
+
+      if (!response.ok) {
+        const data = await response.json();
+        setTerminalError(data.error || 'Failed to send input');
+      }
+    } catch (error) {
+      setTerminalError(`Error: ${error instanceof Error ? error.message : String(error)}`);
+    }
   };
+
+  const stopExecution = async () => {
+    if (!sessionId) return;
+
+    try {
+      await fetch(`${BACKEND_URL}/api/session/${sessionId}`, {
+        method: 'DELETE',
+      });
+      setSessionId(null);
+      setIsRunning(false);
+    } catch (error) {
+      console.error('Failed to stop execution:', error);
+    }
+  };
+
+
 
   const getCodeReview = async () => {
     if (!code.trim()) {
@@ -409,7 +493,20 @@ export default function CodeEditor() {
     { value: 'javascript', label: 'JavaScript' },
   ];
 
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+        e.preventDefault();
+        runCode();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [code, language, runCode]);
+
   if (!mounted) {
+
     return (
       <div className="flex h-screen w-full items-center justify-center bg-background">
         <div className="flex flex-col items-center gap-4">
@@ -542,6 +639,25 @@ export default function CodeEditor() {
                 <p>Execute code {canRunClientSide(language) ? 'in browser' : 'on server'}</p>
               </TooltipContent>
             </Tooltip>
+            {isRunning && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    onClick={stopExecution}
+                    variant="destructive"
+                    size="sm"
+                    className="gap-2 shadow-lg shadow-red-500/20 hover:shadow-red-500/30 transition-all duration-300 btn-glow"
+                  >
+                    <div className="h-2 w-2 rounded-full bg-white animate-pulse" />
+                    Stop
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>Stop execution</p>
+                </TooltipContent>
+              </Tooltip>
+            )}
+
 
             <Tooltip>
               <TooltipTrigger asChild>
@@ -818,46 +934,17 @@ export default function CodeEditor() {
                   className="h-full"
                 >
                   {activeTab === "output" ? (
-                    <div className="h-full overflow-auto p-6">
-                      {output ? (
-                        <pre className="font-mono text-sm text-foreground whitespace-pre-wrap leading-relaxed">
-                          {output}
-                        </pre>
-                      ) : (
-                        <div className="flex h-full items-center justify-center">
-                          <div className="text-center max-w-sm">
-                            <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-muted/50 border border-border/50">
-                              <Terminal className="h-8 w-8 text-muted-foreground" />
-                            </div>
-                            <h3 className="text-lg font-semibold text-foreground mb-2">
-                              Ready to Execute
-                            </h3>
-                            <p className="text-sm text-muted-foreground mb-4">
-                              Write some code and click Run to see the output here.
-                            </p>
-                            <Badge variant="secondary" className="gap-1.5">
-                              {canRunClientSide(language) ? (
-                                <>
-                                  <Zap className="h-3 w-3" />
-                                  Runs in browser
-                                </>
-                              ) : canRunOnBackend(language) ? (
-                                <>
-                                  <Server className="h-3 w-3" />
-                                  Runs on server
-                                </>
-                              ) : (
-                                <>
-                                  <Code2 className="h-3 w-3" />
-                                  Analysis only
-                                </>
-                              )}
-                            </Badge>
-                          </div>
-                        </div>
-                      )}
+                    <div className="h-full">
+                      <TerminalComponent
+                        output={terminalOutput}
+                        error={terminalError}
+                        isRunning={isRunning}
+                        onInput={handleTerminalInput}
+                        sessionId={sessionId || undefined}
+                      />
                     </div>
                   ) : activeTab === "context" ? (
+
                     <CodeContextViewer
                       context={codeContext}
                       isAnalyzing={isAnalyzing}

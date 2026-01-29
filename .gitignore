@@ -44,3 +44,4 @@ next-env.d.ts
 solace-backend/node_modules
 
 node_modules
+solace-backend/temp
