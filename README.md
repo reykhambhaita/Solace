@@ -1,8 +1,57 @@
 # Solace
 
-**Solace** is an AI-powered code learning platform that provides intelligent code analysis, review, translation, and curated learning resources. It helps developers understand code deeply through multi-dimensional analysis and connects them with relevant learning materials.
+<div align="center">
 
-## ✨ Features
+![Next.js](https://img.shields.io/badge/Next.js-000000?style=for-the-badge&logo=nextdotjs&logoColor=white)
+![React](https://img.shields.io/badge/React-20232A?style=for-the-badge&logo=react&logoColor=61DAFB)
+![Node.js](https://img.shields.io/badge/Node.js-339933?style=for-the-badge&logo=nodedotjs&logoColor=white)
+![Express](https://img.shields.io/badge/Express-000000?style=for-the-badge&logo=express&logoColor=white)
+![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?style=for-the-badge&logo=typescript&logoColor=white)
+![Tailwind CSS](https://img.shields.io/badge/Tailwind_CSS-38B2AC?style=for-the-badge&logo=tailwind-css&logoColor=white)
+
+An AI-powered code learning platform that provides intelligent code analysis, review, translation, and curated learning resources. Solace helps developers understand code deeply through multi-dimensional analysis and connects them with relevant learning materials.
+
+</div>
+
+---
+
+## Table of Contents
+
+- [Project Overview](#project-overview)
+- [Why Solace Exists](#why-solace-exists)
+- [Features](#features)
+- [Tech Stack](#tech-stack)
+- [Architecture](#architecture)
+- [Getting Started](#getting-started)
+  - [Prerequisites](#prerequisites)
+  - [Installation](#installation)
+  - [Running the Application](#running-the-application)
+- [Usage](#usage)
+- [API Documentation](#api-documentation)
+- [Contributing](#contributing)
+- [License](#license)
+- [Acknowledgments](#acknowledgments)
+
+## Project Overview
+
+Solace is a comprehensive code learning platform built with **Next.js 16** and **React 19** on the frontend, powered by a **Node.js/Express** backend. It leverages **Groq's Qwen-3-32B** model for intelligent code analysis and **Tree-sitter** for accurate AST parsing, providing developers with deep insights into code structure, behavior, and learning opportunities.
+
+## Why Solace Exists
+
+Learning to code and understanding complex codebases can be challenging, especially when:
+- Code lacks documentation or context
+- Multiple programming paradigms are involved
+- Cross-language translation is needed
+- Finding relevant learning resources is time-consuming
+
+Solace solves these problems by providing:
+
+- **Deep Understanding**: Multi-dimensional code analysis beyond syntax
+- **Intelligent Guidance**: AI-powered reviews that identify risks and opportunities
+- **Language Flexibility**: Seamless translation between 10+ programming languages
+- **Curated Learning**: Smart resource discovery tailored to your code
+
+## Features
 
 ### 🔍 **Deep Code Analysis**
 - **Multi-Language Support**: JavaScript, TypeScript, Python, Java, Go, C, C++, Rust, Ruby, PHP
@@ -34,7 +83,43 @@
 - **Tree-Sitter Integration**: Accurate AST-based code parsing
 - **Dark/Light Mode**: Seamless theme switching
 
-## 🏗️ Architecture
+## Tech Stack
+
+### Frontend
+
+<div>
+
+![Next.js](https://img.shields.io/badge/Next.js-000000?style=flat-square&logo=nextdotjs&logoColor=white)
+![React](https://img.shields.io/badge/React-20232A?style=flat-square&logo=react&logoColor=61DAFB)
+![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?style=flat-square&logo=typescript&logoColor=white)
+![Tailwind CSS](https://img.shields.io/badge/Tailwind_CSS-38B2AC?style=flat-square&logo=tailwind-css&logoColor=white)
+
+</div>
+
+- **Framework**: Next.js 16 (App Router)
+- **UI Library**: React 19
+- **Styling**: Tailwind CSS 4
+- **Code Editor**: CodeMirror 6
+- **Parser**: Tree-sitter (WASM)
+- **Animations**: Framer Motion
+- **State**: Zustand
+- **Storage**: Dexie (IndexedDB)
+
+### Backend
+
+<div>
+
+![Node.js](https://img.shields.io/badge/Node.js-339933?style=flat-square&logo=nodedotjs&logoColor=white)
+![Express](https://img.shields.io/badge/Express-000000?style=flat-square&logo=express&logoColor=white)
+
+</div>
+
+- **Runtime**: Node.js
+- **Framework**: Express 5
+- **AI Models**: Groq (Qwen-3-32B)
+- **Search APIs**: Tavily, MDN, Stack Overflow, GitHub
+
+## Architecture
 
 ### Frontend (Next.js + React)
 ```
@@ -66,68 +151,69 @@ solace-backend/
     └── resource-pipeline.js # Resource ranking & pruning
 ```
 
-## 🚀 Getting Started
+## Getting Started
 
 ### Prerequisites
+
 - Node.js 20+ and npm
 - API Keys:
-  - **Groq API Key** (for AI review & ranking)
-  - **Tavily API Key** (for web search)
-  - **GitHub Token** (optional, for GitHub search)
+  - **Groq API Key** (for AI review & ranking) - [Get it here](https://console.groq.com)
+  - **Tavily API Key** (for web search) - [Get it here](https://tavily.com)
+  - **GitHub Token** (optional, for GitHub search) - [Generate here](https://github.com/settings/tokens)
 
 ### Installation
 
 1. **Clone the repository**
-```bash
-git clone https://github.com/yourusername/solace.git
-cd solace
-```
+   ```bash
+   git clone https://github.com/yourusername/solace.git
+   cd solace
+   ```
 
 2. **Install frontend dependencies**
-```bash
-npm install
-```
+   ```bash
+   npm install
+   ```
 
 3. **Install backend dependencies**
-```bash
-cd solace-backend
-npm install
-cd ..
-```
+   ```bash
+   cd solace-backend
+   npm install
+   cd ..
+   ```
 
 4. **Configure environment variables**
 
-Create `.env.local` in the root directory:
-```env
-NEXT_PUBLIC_BACKEND_URL=http://localhost:3001
-NEXT_PUBLIC_GEMINI_API_KEY=your_gemini_api_key_here
-```
+   Create `.env.local` in the root directory:
+   ```env
+   NEXT_PUBLIC_BACKEND_URL=http://localhost:3001
+   NEXT_PUBLIC_GEMINI_API_KEY=your_gemini_api_key_here
+   ```
 
-Create `.env` in `solace-backend/`:
-```env
-GROQ_API_KEY=your_groq_api_key_here
-TAVILY_API_KEY=your_tavily_api_key_here
-GITHUB_TOKEN=your_github_token_here
-PORT=3001
-```
+   Create `.env` in `solace-backend/`:
+   ```env
+   GROQ_API_KEY=your_groq_api_key_here
+   TAVILY_API_KEY=your_tavily_api_key_here
+   GITHUB_TOKEN=your_github_token_here
+   PORT=3001
+   ```
 
 ### Running the Application
 
 1. **Start the backend server**
-```bash
-cd solace-backend
-npm start
-```
+   ```bash
+   cd solace-backend
+   npm start
+   ```
 
 2. **Start the frontend (in a new terminal)**
-```bash
-npm run dev
-```
+   ```bash
+   npm run dev
+   ```
 
 3. **Open your browser**
-Navigate to [http://localhost:3000](http://localhost:3000)
+   Navigate to [http://localhost:3000](http://localhost:3000)
 
-## 📖 Usage
+## Usage
 
 ### 1. Write Code
 Use the integrated code editor to write or paste code in any supported language.
@@ -159,7 +245,7 @@ Select a target language to translate your code while preserving:
 - Code structure
 - Idiomatic patterns
 
-## 🔧 API Documentation
+## API Documentation
 
 ### Backend Endpoints
 
@@ -241,35 +327,32 @@ Translates code between languages.
 }
 ```
 
-## 🛠️ Tech Stack
+## Contributing
 
-### Frontend
-- **Framework**: Next.js 16 (App Router)
-- **UI Library**: React 19
-- **Styling**: Tailwind CSS 4
-- **Code Editor**: CodeMirror 6
-- **Parser**: Tree-sitter (WASM)
-- **Animations**: Framer Motion
-- **State**: Zustand
-- **Storage**: Dexie (IndexedDB)
+Contributions are welcome! Please follow these steps:
 
-### Backend
-- **Runtime**: Node.js
-- **Framework**: Express 5
-- **AI Models**: Groq (Qwen-3-32B)
-- **Search APIs**: Tavily, MDN, Stack Overflow, GitHub
+1. Fork the repository
+2. Create a new branch (`git checkout -b feature/your-feature-name`)
+3. Make your changes
+4. Commit your changes (`git commit -m 'Add some feature'`)
+5. Push to the branch (`git push origin feature/your-feature-name`)
+6. Open a Pull Request
 
-## 🤝 Contributing
+Please make sure to update tests as appropriate and adhere to the existing coding style.
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+## Acknowledgments
 
-## 📄 License
-
-This project is licensed under the ISC License.
-
-## 🙏 Acknowledgments
-
-- **Groq** for fast LLM inference
+- **Groq** for fast LLM inference with Qwen-3-32B
 - **Tree-sitter** for robust code parsing
 - **CodeMirror** for the excellent editor
 - **Tavily** for intelligent web search
+
+---
+
+<div align="center">
+
+**Built with ❤️ for developers in training**
+
+[Report Bug](https://github.com/yourusername/solace/issues) • [Request Feature](https://github.com/yourusername/solace/issues)
+
+</div>
