@@ -16,10 +16,9 @@ import {
   Search,
   Sparkles,
   Star,
-  Video,
-  Zap,
+  Video
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 interface Resource {
   type: 'github' | 'stackoverflow' | 'documentation' | 'video';
@@ -73,6 +72,14 @@ export default function ResourceFetcher(props: ResourceFetcherProps) {
   const [activeFilter, setActiveFilter] = useState<'all' | 'github' | 'stackoverflow' | 'documentation' | 'video'>('all');
   const [userIntent, setUserIntent] = useState('');
   const [lastFetchCode, setLastFetchCode] = useState('');
+
+  // Load saved filter preference
+  useEffect(() => {
+    const savedFilter = localStorage.getItem('solace-resource-filter');
+    if (savedFilter && ['all', 'github', 'stackoverflow', 'documentation', 'video'].includes(savedFilter)) {
+      setActiveFilter(savedFilter as any);
+    }
+  }, []);
 
   const fetchResources = async () => {
     if (!codeContext) {
@@ -152,6 +159,7 @@ export default function ResourceFetcher(props: ResourceFetcherProps) {
     }
   };
 
+  // FIX: Memoize filtered resources to prevent recalculation during renders
   const filteredResources = activeFilter === 'all'
     ? resources
     : resources.filter(r => r.type === activeFilter);
@@ -169,10 +177,10 @@ export default function ResourceFetcher(props: ResourceFetcherProps) {
   const getTypeStyles = (type: string) => {
     switch (type) {
       case 'github': return {
-        bg: 'bg-purple-500/10',
-        border: 'border-purple-500/20',
-        text: 'text-purple-500',
-        gradient: 'from-purple-500 to-violet-500',
+        bg: 'bg-zinc-500/10',
+        border: 'border-zinc-500/20',
+        text: 'text-zinc-500',
+        gradient: 'from-zinc-500 to-slate-500',
       };
       case 'stackoverflow': return {
         bg: 'bg-orange-500/10',
@@ -195,127 +203,83 @@ export default function ResourceFetcher(props: ResourceFetcherProps) {
       default: return {
         bg: 'bg-muted/50',
         border: 'border-border',
-        text: 'text-muted-foreground',
-        gradient: 'from-gray-500 to-gray-600',
+        text: 'text-foreground',
+        gradient: 'from-muted to-muted',
       };
     }
   };
 
-  const countByType = (type: string) => {
-    return resources.filter(r => r.type === type).length;
-  };
-
   const filterButtons = [
     { id: 'all' as const, label: 'All', icon: Sparkles, count: resources.length },
-    { id: 'github' as const, label: 'GitHub', icon: Code, count: countByType('github') },
-    { id: 'stackoverflow' as const, label: 'Stack Overflow', icon: MessageSquare, count: countByType('stackoverflow') },
-    { id: 'documentation' as const, label: 'Docs', icon: BookOpen, count: countByType('documentation') },
-    { id: 'video' as const, label: 'Videos', icon: Video, count: countByType('video') },
+    { id: 'github' as const, label: 'GitHub', icon: Code, count: resources.filter(r => r.type === 'github').length },
+    { id: 'stackoverflow' as const, label: 'Stack Overflow', icon: MessageSquare, count: resources.filter(r => r.type === 'stackoverflow').length },
+    { id: 'documentation' as const, label: 'Docs', icon: BookOpen, count: resources.filter(r => r.type === 'documentation').length },
+    { id: 'video' as const, label: 'Videos', icon: Video, count: resources.filter(r => r.type === 'video').length },
   ];
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex h-full flex-col bg-background/30">
       {/* Header */}
-      <div className="border-b border-border/50 glass-subtle p-4 space-y-4">
-        <div>
-          <div className="flex items-center gap-2 mb-1">
-            <div className="flex h-6 w-6 items-center justify-center rounded-lg bg-linear-to-br from-emerald-500 to-green-500 shadow-sm">
-              <BookOpen className="h-3 w-3 text-white" />
-            </div>
-            <h2 className="text-lg font-semibold text-foreground">Learning Resources</h2>
-          </div>
-          <p className="text-sm text-muted-foreground">
-            AI-curated resources based on your code context
-          </p>
-        </div>
+      <div className="border-b border-border/50 glass-subtle p-4">
+        <div className="flex items-start justify-between gap-4 mb-4">
+          <div className="flex items-start gap-3">
 
-        {/* Search Input & Button */}
-        <div className="flex items-center gap-3">
-          <div className="flex-1 relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <input
-              type="text"
-              placeholder="What do you want to learn? (optional)"
-              value={userIntent}
-              onChange={(e) => setUserIntent(e.target.value)}
-              className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-border/50 bg-background/50 text-foreground text-sm focus:outline-none focus:border-emerald-500/50 focus:ring-2 focus:ring-emerald-500/20 placeholder:text-muted-foreground transition-all"
-            />
+            <div>
+              <h2 className="text-lg font-semibold text-foreground flex items-center gap-2">
+                Learning Resources
+              </h2>
+
+            </div>
           </div>
+
           <Button
             onClick={fetchResources}
             disabled={isLoading || isAnalyzing || !codeContext}
-            variant={sourceCode !== lastFetchCode && resources.length > 0 ? "default" : "neon"}
-            className="gap-2 relative"
+            size="sm"
+            className="gap-2 bg-blue-600 hover:bg-blue-500 text-white shadow-lg shadow-blue-500/20 hover:shadow-blue-500/30 transition-all shrink-0"
           >
             {isLoading ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Searching...
+              </>
             ) : (
-              <Search className="h-4 w-4" />
-            )}
-            {isLoading ? 'Fetching...' : sourceCode !== lastFetchCode && resources.length > 0 ? 'Refresh Resources' : 'Find Resources'}
-            {sourceCode !== lastFetchCode && resources.length > 0 && (
-              <span className="absolute -top-1 -right-1 flex h-3 w-3">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>
-              </span>
+              <>
+                <Search className="h-4 w-4" />
+                Find Resources
+              </>
             )}
           </Button>
         </div>
 
-        {/* Pipeline Metadata */}
-        {resources.length > 0 && metadata && (
-          <motion.div
-            initial={{ opacity: 0, y: -10 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="glass rounded-xl p-3"
-          >
-            <div className="grid grid-cols-4 gap-4 text-xs">
-              <div className="text-center">
-                <div className="text-lg font-bold text-foreground">
-                  {metadata?.pipeline?.baselineQueries || 0}
-                </div>
-                <span className="text-muted-foreground">Baseline Queries</span>
-              </div>
-              <div className="text-center">
-                <div className="text-lg font-bold text-blue-500">
-                  {metadata?.pipeline?.expandedQueries || 0}
-                </div>
-                <span className="text-muted-foreground">Expanded</span>
-              </div>
-              <div className="text-center">
-                <div className="text-lg font-bold text-purple-500">
-                  {metadata?.pipeline?.resourcesRanked || 0}
-                </div>
-                <span className="text-muted-foreground">Ranked</span>
-              </div>
-              <div className="text-center">
-                <div className="text-lg font-bold text-emerald-500">
-                  {resources.length}
-                </div>
-                <span className="text-muted-foreground">Results</span>
-              </div>
-            </div>
-            {metadata?.learningGoal && (
-              <div className="mt-3 pt-3 border-t border-border/50 text-xs text-muted-foreground flex items-center gap-2">
-                <Zap className="h-3 w-3 text-yellow-500" />
-                <span>Goal: {metadata.learningGoal}</span>
-              </div>
-            )}
-          </motion.div>
-        )}
+        {/* Optional User Intent Input */}
+        <div className="mb-4">
+          <input
+            type="text"
+            value={userIntent}
+            onChange={(e) => setUserIntent(e.target.value)}
+            placeholder="What do you want to learn? (optional)"
+            className="w-full px-3 py-2 text-sm bg-background/50 border border-border/50 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-all"
+          />
+        </div>
 
-        {/* Filters */}
+
+
+        {/* Filter Buttons */}
         {resources.length > 0 && (
           <div className="flex gap-2 flex-wrap">
             {filterButtons.map((filter) => (
               <button
                 key={filter.id}
                 type="button"
-                onClick={() => setActiveFilter(filter.id)}
+                onClick={() => {
+                  setActiveFilter(filter.id);
+                  localStorage.setItem('solace-resource-filter', filter.id);
+                }}
                 className={`
                   flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all duration-200
                   ${activeFilter === filter.id
-                    ? 'bg-emerald-500/10 text-emerald-500 border border-emerald-500/30'
+                    ? 'bg-blue-500/10 text-blue-500 border border-blue-500/30'
                     : 'bg-muted/50 text-muted-foreground hover:bg-muted border border-transparent'
                   }
                 `}
@@ -323,7 +287,7 @@ export default function ResourceFetcher(props: ResourceFetcherProps) {
                 <filter.icon className="h-3.5 w-3.5" />
                 {filter.label}
                 {filter.count > 0 && (
-                  <span className={`ml-1 ${activeFilter === filter.id ? 'text-emerald-400' : 'text-muted-foreground/60'}`}>
+                  <span className={`ml-1 ${activeFilter === filter.id ? 'text-blue-400' : 'text-muted-foreground/60'}`}>
                     ({filter.count})
                   </span>
                 )}
@@ -333,7 +297,7 @@ export default function ResourceFetcher(props: ResourceFetcherProps) {
         )}
       </div>
 
-      {/* Content */}
+      {/* Content - FIX: Remove AnimatePresence that causes flickering */}
       <ScrollArea className="flex-1 min-h-0">
         <div className="p-4">
           {error ? (
@@ -352,27 +316,7 @@ export default function ResourceFetcher(props: ResourceFetcherProps) {
                 </div>
               </div>
             </motion.div>
-          ) : isLoading ? (
-            <div className="flex flex-col items-center justify-center h-64">
-              <motion.div
-                initial={{ opacity: 0, scale: 0.95 }}
-                animate={{ opacity: 1, scale: 1 }}
-                className="text-center"
-              >
-                <div className="relative mx-auto mb-6">
-                  <div className="absolute inset-0 rounded-full bg-emerald-500/20 blur-xl animate-pulse" />
-                  <div className="relative flex h-16 w-16 items-center justify-center rounded-2xl bg-linear-to-br from-emerald-500 to-green-500 shadow-lg shadow-emerald-500/25">
-                    <Search className="h-8 w-8 text-white animate-pulse" />
-                  </div>
-                </div>
-                <h3 className="text-lg font-semibold text-foreground mb-2">
-                  Finding Resources
-                </h3>
-                <p className="text-sm text-muted-foreground">
-                  Searching GitHub, Stack Overflow, docs, and more...
-                </p>
-              </motion.div>
-            </div>
+
           ) : resources.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-64">
               <motion.div
@@ -406,7 +350,9 @@ export default function ResourceFetcher(props: ResourceFetcherProps) {
               </motion.div>
             </div>
           ) : (
+            // FIX: Use key based on activeFilter to trigger re-animation without unmounting
             <motion.div
+              key={activeFilter}
               variants={containerVariants}
               initial="hidden"
               animate="visible"
@@ -432,7 +378,7 @@ export default function ResourceFetcher(props: ResourceFetcherProps) {
                       <div className="flex-1 min-w-0">
                         {/* Title & Score */}
                         <div className="flex items-start justify-between gap-3 mb-2">
-                          <h3 className="font-medium text-foreground text-sm leading-snug line-clamp-2 group-hover:text-emerald-500 transition-colors">
+                          <h3 className="font-medium text-foreground text-sm leading-snug line-clamp-2 group-hover:text-blue-500 transition-colors">
                             {resource.title}
                           </h3>
                           <Badge variant="success" className="shrink-0 text-[10px]">
@@ -490,7 +436,7 @@ export default function ResourceFetcher(props: ResourceFetcherProps) {
                           href={resource.url}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="inline-flex items-center gap-1.5 text-sm font-medium text-emerald-500 hover:text-emerald-400 transition-colors"
+                          className="inline-flex items-center gap-1.5 text-sm font-medium text-blue-500 hover:text-blue-400 transition-colors"
                         >
                           Open Resource
                           <ExternalLink className="h-3.5 w-3.5" />

@@ -14,9 +14,8 @@ import {
   Code2,
   Info,
   Languages,
-  Loader2,
   XCircle,
-  Zap,
+  Zap
 } from "lucide-react";
 import { useTheme } from "next-themes";
 
@@ -120,35 +119,7 @@ export function TranslationViewer({
     );
   }
 
-  if (isLoading) {
-    return (
-      <div className="flex h-full items-center justify-center p-8">
-        <motion.div
-          initial={{ opacity: 0, scale: 0.95 }}
-          animate={{ opacity: 1, scale: 1 }}
-          className="text-center"
-        >
-          <div className="relative mx-auto mb-6">
-            <div className="absolute inset-0 rounded-full bg-purple-500/20 blur-xl animate-pulse" />
-            <div className="relative flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-purple-500 to-violet-500 shadow-lg shadow-purple-500/25">
-              <Languages className="h-8 w-8 text-white animate-pulse" />
-            </div>
-          </div>
-          <h3 className="text-lg font-semibold text-foreground mb-2">
-            Translating {sourceLanguage.toUpperCase()} to {targetLanguage.toUpperCase()}
-          </h3>
-          <p className="text-sm text-muted-foreground">
-            AI-powered code translation in progress...
-          </p>
-          <div className="flex items-center justify-center gap-1 mt-3">
-            <div className="h-1.5 w-1.5 rounded-full bg-purple-500 animate-bounce" style={{ animationDelay: '0ms' }} />
-            <div className="h-1.5 w-1.5 rounded-full bg-purple-500 animate-bounce" style={{ animationDelay: '150ms' }} />
-            <div className="h-1.5 w-1.5 rounded-full bg-purple-500 animate-bounce" style={{ animationDelay: '300ms' }} />
-          </div>
-        </motion.div>
-      </div>
-    );
-  }
+
 
   if (!translatedCode) {
     return (
@@ -188,7 +159,7 @@ export function TranslationViewer({
           {validation && (
             <div className="flex items-center gap-1.5">
               {validation.isValid ? (
-                <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+                <CheckCircle2 className="h-4 w-4 text-teal-500" />
               ) : validation.critical.length > 0 ? (
                 <XCircle className="h-4 w-4 text-red-500" />
               ) : (
@@ -207,10 +178,9 @@ export function TranslationViewer({
                   value={validation.score * 100}
                   className="h-2 w-20"
                 />
-                <span className={`text-xs font-bold ${
-                  validation.score >= 0.8 ? 'text-emerald-500' :
+                <span className={`text-xs font-bold ${validation.score >= 0.8 ? 'text-teal-500' :
                   validation.score >= 0.6 ? 'text-yellow-500' : 'text-red-500'
-                }`}>
+                  }`}>
                   {Math.round(validation.score * 100)}%
                 </span>
               </div>
@@ -293,7 +263,7 @@ export function TranslationViewer({
           {validation && validation.comparisonReport && (
             <motion.div variants={itemVariants} className="space-y-4">
               <div className="flex items-center gap-2">
-                <Zap className="h-4 w-4 text-purple-500" />
+                <Zap className="h-4 w-4 text-indigo-500" />
                 <h3 className="text-sm font-semibold text-foreground">Validation Report</h3>
               </div>
 
@@ -391,7 +361,7 @@ export function TranslationViewer({
           {/* Translated Code */}
           <motion.div variants={itemVariants} className="space-y-3">
             <div className="flex items-center gap-2">
-              <Code2 className="h-4 w-4 text-emerald-500" />
+              <Code2 className="h-4 w-4 text-teal-500" />
               <h3 className="text-sm font-semibold text-foreground">Translated Code</h3>
             </div>
             <div className="glass rounded-xl overflow-hidden border border-border/50">
@@ -449,15 +419,14 @@ function ValidationItem({
     : null;
 
   return (
-    <div className={`p-3 rounded-lg border transition-colors ${
-      isValid
-        ? 'bg-emerald-500/5 border-emerald-500/20'
-        : 'bg-red-500/5 border-red-500/20'
-    }`}>
+    <div className={`p-3 rounded-lg border transition-colors ${isValid
+      ? 'bg-teal-500/5 border-teal-500/20'
+      : 'bg-red-500/5 border-red-500/20'
+      }`}>
       <div className="flex items-center justify-between mb-1.5">
         <span className="text-xs text-muted-foreground">{label}</span>
         {isValid ? (
-          <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
+          <CheckCircle2 className="h-3.5 w-3.5 text-teal-500" />
         ) : (
           <XCircle className="h-3.5 w-3.5 text-red-500" />
         )}
@@ -465,7 +434,7 @@ function ValidationItem({
       <div className="flex items-baseline gap-2 text-xs">
         <span className="text-muted-foreground">{expected}</span>
         <ArrowRight className="h-2.5 w-2.5 text-muted-foreground/50" />
-        <span className={`font-medium ${isValid ? 'text-emerald-500' : 'text-red-500'}`}>
+        <span className={`font-medium ${isValid ? 'text-teal-500' : 'text-red-500'}`}>
           {actual}
         </span>
         {delta !== null && (

@@ -30,17 +30,13 @@ import { Editor } from "@monaco-editor/react";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   ArrowRightLeft,
-  BookOpen,
-  Brain,
   Code2,
-  Cpu,
   Loader2,
   Moon,
   Play,
   Server,
   Sparkles,
   Sun,
-  Terminal,
   Zap
 } from "lucide-react";
 import { useTheme } from "next-themes";
@@ -56,7 +52,7 @@ function BackgroundOrbs() {
       <div
         className="absolute -top-40 -left-40 w-96 h-96 rounded-full animate-orb-1 opacity-30 dark:opacity-20"
         style={{
-          background: 'radial-gradient(circle, oklch(0.65 0.28 280 / 0.4) 0%, transparent 70%)',
+          background: 'radial-gradient(circle, oklch(0.6 0.2 260 / 0.4) 0%, transparent 70%)',
           filter: 'blur(20px)',
           willChange: 'transform',
         }}
@@ -65,7 +61,7 @@ function BackgroundOrbs() {
       <div
         className="absolute top-1/4 -right-20 w-80 h-80 rounded-full animate-orb-2 opacity-25 dark:opacity-15"
         style={{
-          background: 'radial-gradient(circle, oklch(0.75 0.22 195 / 0.4) 0%, transparent 70%)',
+          background: 'radial-gradient(circle, oklch(0.7 0.15 240 / 0.4) 0%, transparent 70%)',
           filter: 'blur(15px)',
           willChange: 'transform',
         }}
@@ -74,7 +70,7 @@ function BackgroundOrbs() {
       <div
         className="absolute -bottom-20 left-1/3 w-72 h-72 rounded-full animate-orb-3 opacity-20 dark:opacity-15"
         style={{
-          background: 'radial-gradient(circle, oklch(0.8 0.22 145 / 0.35) 0%, transparent 70%)',
+          background: 'radial-gradient(circle, oklch(0.8 0.1 220 / 0.35) 0%, transparent 70%)',
           filter: 'blur(15px)',
           willChange: 'transform',
         }}
@@ -83,7 +79,7 @@ function BackgroundOrbs() {
       <div
         className="absolute top-1/2 left-1/4 w-64 h-64 rounded-full animate-orb-2 opacity-15 dark:opacity-10"
         style={{
-          background: 'radial-gradient(circle, oklch(0.75 0.2 35 / 0.3) 0%, transparent 70%)',
+          background: 'radial-gradient(circle, oklch(0.9 0.05 260 / 0.3) 0%, transparent 70%)',
           filter: 'blur(15px)',
           animationDelay: '-5s',
           willChange: 'transform',
@@ -203,9 +199,17 @@ export default function CodeEditor() {
       console.log = originalLog;
       console.error = originalError;
 
-      setOutput(logs.join('\n') || 'Code executed successfully (no output)');
+      console.log = originalLog;
+      console.error = originalError;
+
+      const outputText = logs.join('\n') || 'Code executed successfully (no output)';
+      setTerminalOutput(outputText);
+      // setOutput is not used by Terminal component, but keeping it if needed for other logic
+      setOutput(outputText);
     } catch (error) {
-      setOutput(`Error: ${error instanceof Error ? error.message : String(error)}`);
+      const errorText = `Error: ${error instanceof Error ? error.message : String(error)}`;
+      setTerminalError(errorText);
+      setOutput(errorText);
     } finally {
       setIsRunning(false);
     }
@@ -235,7 +239,7 @@ export default function CodeEditor() {
         clearInterval(pollInterval);
         setIsRunning(false);
       }
-    }, 500); // Poll every 500ms for more responsive output
+    }, 500);
 
     return () => clearInterval(pollInterval);
   }, []);
@@ -460,11 +464,11 @@ export default function CodeEditor() {
   }, [isDragging, handleMouseMove]);
 
   const tabs = [
-    { id: 'output' as const, label: 'Output', icon: Terminal, color: 'text-foreground', loading: false },
-    { id: 'context' as const, label: 'Context', icon: Brain, color: 'text-blue-500', loading: isAnalyzing },
-    { id: 'review' as const, label: 'AI Review', icon: Sparkles, color: 'text-cyan-500', loading: isReviewing },
-    { id: 'translate' as const, label: 'Translate', icon: ArrowRightLeft, color: 'text-purple-500', loading: isTranslating },
-    { id: 'resources' as const, label: 'Resources', icon: BookOpen, color: 'text-emerald-500', loading: false },
+    { id: 'output' as const, label: 'Output', color: 'text-foreground', loading: false },
+    { id: 'context' as const, label: 'Context', color: 'text-blue-500', loading: isAnalyzing },
+    { id: 'review' as const, label: 'AI Review', color: 'text-indigo-500', loading: isReviewing },
+    { id: 'translate' as const, label: 'Translate', color: 'text-sky-500', loading: isTranslating },
+    { id: 'resources' as const, label: 'Resources', color: 'text-slate-500', loading: false },
   ];
 
   const languages = [
@@ -505,17 +509,7 @@ export default function CodeEditor() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [code, language, runCode]);
 
-  if (!mounted) {
 
-    return (
-      <div className="flex h-screen w-full items-center justify-center bg-background">
-        <div className="flex flex-col items-center gap-4">
-          <Loader2 className="h-8 w-8 animate-spin text-primary" />
-          <span className="text-sm text-muted-foreground">Loading Solace...</span>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <TooltipProvider delayDuration={300}>
@@ -538,17 +532,12 @@ export default function CodeEditor() {
               whileHover={{ scale: 1.02 }}
               transition={{ type: "spring", stiffness: 400 }}
             >
-              <div className="relative">
-                <div className="absolute inset-0 bg-linear-to-br from-violet-500 to-cyan-500 rounded-lg blur-md opacity-50" />
-                <div className="relative flex h-9 w-9 items-center justify-center rounded-lg bg-linear-to-br from-violet-500 to-cyan-500 shadow-lg">
-                  <Cpu className="h-5 w-5 text-white" />
-                </div>
-              </div>
+
               <div className="flex flex-col">
-                <h1 className="text-lg font-bold tracking-tight text-foreground">
+                <h1 className="text-2xl font-bold tracking-tight text-foreground">
                   Solace
                 </h1>
-                <span className="text-[10px] font-medium text-muted-foreground -mt-0.5">
+                <span className="text-[14px] font-medium text-muted-foreground -mt-0.5">
                   AI Code Analysis
                 </span>
               </div>
@@ -625,7 +614,7 @@ export default function CodeEditor() {
                   onClick={runCode}
                   disabled={isRunning || getExecutionType(language) === 'none'}
                   size="sm"
-                  className="gap-2 bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-500/20 hover:shadow-emerald-500/30 transition-all duration-300 btn-glow"
+                  className="gap-2 bg-blue-600 hover:bg-blue-500 text-white shadow-lg shadow-blue-500/20 hover:shadow-blue-500/30 transition-all duration-300 btn-glow"
                 >
                   {isRunning ? (
                     <Loader2 className="h-4 w-4 animate-spin" />
@@ -665,7 +654,7 @@ export default function CodeEditor() {
                   onClick={getCodeReview}
                   disabled={isReviewing || isAnalyzing || !codeContext}
                   size="sm"
-                  className="gap-2 bg-cyan-600 hover:bg-cyan-500 text-white shadow-lg shadow-cyan-500/20 hover:shadow-cyan-500/30 transition-all duration-300 btn-glow"
+                  className="gap-2 bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-500/20 hover:shadow-indigo-500/30 transition-all duration-300 btn-glow"
                 >
                   {isReviewing ? (
                     <Loader2 className="h-4 w-4 animate-spin" />
@@ -686,7 +675,7 @@ export default function CodeEditor() {
                   onClick={handleTranslate}
                   disabled={isTranslating || isAnalyzing || !codeContext || language === targetLanguage}
                   size="sm"
-                  className="gap-2 bg-purple-600 hover:bg-purple-500 text-white shadow-lg shadow-purple-500/20 hover:shadow-purple-500/30 transition-all duration-300 btn-glow"
+                  className="gap-2 bg-sky-600 hover:bg-sky-500 text-white shadow-lg shadow-sky-500/20 hover:shadow-sky-500/30 transition-all duration-300 btn-glow"
                 >
                   {isTranslating ? (
                     <Loader2 className="h-4 w-4 animate-spin" />
@@ -755,7 +744,12 @@ export default function CodeEditor() {
                 height="100%"
                 language={language}
                 value={code}
-                onChange={(value) => setCode(value || "")}
+                onChange={(value) => {
+                  setCode(value || "");
+                  if (activeTab !== "context") {
+                    setActiveTab("context");
+                  }
+                }}
                 theme={resolvedTheme === 'dark' ? "vs-dark" : "light"}
                 onMount={(editor, monaco) => {
                   const supportedLanguages = [
@@ -913,7 +907,6 @@ export default function CodeEditor() {
                     }
                   `}
                 >
-                  <tab.icon className="h-4 w-4" />
                   {tab.label}
                   {tab.loading && (
                     <Loader2 className="h-3 w-3 animate-spin" />

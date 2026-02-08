@@ -10,7 +10,6 @@ import {
   AlertCircle,
   Binary,
   Boxes,
-  BrainCircuit,
   Clock,
   Code2,
   Cpu,
@@ -21,7 +20,7 @@ import {
   Sparkles,
   Target,
   TestTube,
-  Zap,
+  Zap
 } from "lucide-react";
 import type { CodeContext } from "../lib/analyzer/context-detector";
 
@@ -65,28 +64,7 @@ export function CodeContextViewer({ context, isAnalyzing, error }: CodeContextVi
     );
   }
 
-  if (isAnalyzing) {
-    return (
-      <div className="flex h-full items-center justify-center p-8">
-        <motion.div
-          initial={{ opacity: 0, scale: 0.95 }}
-          animate={{ opacity: 1, scale: 1 }}
-          className="text-center"
-        >
-          <div className="relative mx-auto mb-6">
-            <div className="absolute inset-0 rounded-full bg-blue-500/20 blur-xl animate-pulse" />
-            <div className="relative flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-blue-500 to-cyan-500 shadow-lg shadow-blue-500/25">
-              <BrainCircuit className="h-8 w-8 text-white animate-pulse" />
-            </div>
-          </div>
-          <h3 className="text-lg font-semibold text-foreground mb-2">Analyzing Code</h3>
-          <p className="text-sm text-muted-foreground">
-            Extracting context, patterns, and insights...
-          </p>
-        </motion.div>
-      </div>
-    );
-  }
+
 
   if (!context) {
     return (
@@ -122,8 +100,8 @@ export function CodeContextViewer({ context, isAnalyzing, error }: CodeContextVi
           className="flex items-center justify-between pb-4 border-b border-border/50"
         >
           <div className="flex items-center gap-3">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-500/10 border border-emerald-500/20">
-              <Sparkles className="h-4 w-4 text-emerald-500" />
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-500/10 border border-emerald-500/20">
+              <Sparkles className="h-4 w-4 text-blue-500" />
             </div>
             <div>
               <span className="text-sm font-semibold text-foreground">Analysis Complete</span>
@@ -134,7 +112,7 @@ export function CodeContextViewer({ context, isAnalyzing, error }: CodeContextVi
             </div>
           </div>
           <Badge variant="success" className="gap-1.5">
-            <div className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
+            <div className="h-1.5 w-1.5 rounded-full bg-blue-500 animate-pulse" />
             Live
           </Badge>
         </motion.div>
@@ -163,7 +141,7 @@ export function CodeContextViewer({ context, isAnalyzing, error }: CodeContextVi
                     initial={{ width: 0 }}
                     animate={{ width: `${context.language.confidence * 100}%` }}
                     transition={{ duration: 0.5, delay: 0.2 }}
-                    className="h-full bg-gradient-to-r from-blue-500 to-cyan-500"
+                    className="h-full bg-linear-to-r from-blue-600 to-blue-400"
                   />
                 </div>
                 <span className="text-xs font-medium text-foreground">
@@ -186,7 +164,7 @@ export function CodeContextViewer({ context, isAnalyzing, error }: CodeContextVi
         {/* Semantic Intent */}
         <motion.section variants={itemVariants} className="space-y-3">
           <div className="flex items-center gap-2">
-            <Target className="h-4 w-4 text-purple-500" />
+            <Target className="h-4 w-4 text-indigo-500" />
             <h3 className="text-sm font-semibold text-foreground">Semantic Intent</h3>
           </div>
           <div className="glass rounded-xl p-4 space-y-4">
@@ -230,7 +208,7 @@ export function CodeContextViewer({ context, isAnalyzing, error }: CodeContextVi
         {/* Paradigm & Structure */}
         <motion.section variants={itemVariants} className="space-y-3">
           <div className="flex items-center gap-2">
-            <Boxes className="h-4 w-4 text-orange-500" />
+            <Boxes className="h-4 w-4 text-sky-500" />
             <h3 className="text-sm font-semibold text-foreground">Paradigm & Structure</h3>
           </div>
           <div className="glass rounded-xl p-4 space-y-4">
@@ -256,8 +234,8 @@ export function CodeContextViewer({ context, isAnalyzing, error }: CodeContextVi
 
             {/* Pattern Stats */}
             <div className="grid grid-cols-3 gap-3">
-              <div className="text-center p-3 rounded-lg bg-purple-500/5 border border-purple-500/10">
-                <Layers className="h-4 w-4 mx-auto text-purple-500 mb-1" />
+              <div className="text-center p-3 rounded-lg bg-indigo-500/5 border border-indigo-500/10">
+                <Layers className="h-4 w-4 mx-auto text-indigo-500 mb-1" />
                 <div className="text-lg font-bold text-foreground">
                   {context.paradigm.patterns.classes}
                 </div>
@@ -287,7 +265,7 @@ export function CodeContextViewer({ context, isAnalyzing, error }: CodeContextVi
                   {context.paradigm.details.classNames.map((name, idx) => (
                     <code
                       key={`class-${name}-${idx}`}
-                      className="px-2 py-0.5 text-xs font-mono bg-purple-500/10 text-purple-500 dark:text-purple-400 rounded-md border border-purple-500/20"
+                      className="px-2 py-0.5 text-xs font-mono bg-indigo-500/10 text-indigo-500 dark:text-indigo-400 rounded-md border border-indigo-500/20"
                     >
                       {name}
                     </code>
@@ -323,16 +301,14 @@ export function CodeContextViewer({ context, isAnalyzing, error }: CodeContextVi
                       initial={{ width: 0 }}
                       animate={{ width: `${context.paradigm.fitnessScore * 100}%` }}
                       transition={{ duration: 0.5, delay: 0.3 }}
-                      className={`h-full ${
-                        context.paradigm.fitnessScore > 0.8
-                          ? 'bg-gradient-to-r from-emerald-500 to-green-500'
-                          : 'bg-gradient-to-r from-yellow-500 to-orange-500'
-                      }`}
+                      className={`h-full ${context.paradigm.fitnessScore > 0.8
+                        ? 'bg-linear-to-r from-emerald-500 to-green-500'
+                        : 'bg-linear-to-r from-yellow-500 to-orange-500'
+                        }`}
                     />
                   </div>
-                  <span className={`text-xs font-bold ${
-                    context.paradigm.fitnessScore > 0.8 ? 'text-emerald-500' : 'text-yellow-500'
-                  }`}>
+                  <span className={`text-xs font-bold ${context.paradigm.fitnessScore > 0.8 ? 'text-blue-500' : 'text-yellow-500'
+                    }`}>
                     {Math.round(context.paradigm.fitnessScore * 100)}%
                   </span>
                 </div>
@@ -345,7 +321,7 @@ export function CodeContextViewer({ context, isAnalyzing, error }: CodeContextVi
         {(context.libraries.frameworks.length > 0 || context.libraries.libraries.length > 0) && (
           <motion.section variants={itemVariants} className="space-y-3">
             <div className="flex items-center gap-2">
-              <Cpu className="h-4 w-4 text-emerald-500" />
+              <Cpu className="h-4 w-4 text-blue-500" />
               <h3 className="text-sm font-semibold text-foreground">Dependencies</h3>
             </div>
             <div className="glass rounded-xl p-4 space-y-4">
@@ -413,7 +389,7 @@ export function CodeContextViewer({ context, isAnalyzing, error }: CodeContextVi
                         initial={{ width: 0 }}
                         animate={{ width: `${context.reviewIR.quality.testability}%` }}
                         transition={{ duration: 0.5, delay: 0.4 }}
-                        className="h-full bg-gradient-to-r from-cyan-500 to-blue-500"
+                        className="h-full bg-linear-to-r from-indigo-500 to-blue-500"
                       />
                     </div>
                     <span className="text-xs font-bold text-foreground">

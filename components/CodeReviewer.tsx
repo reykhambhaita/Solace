@@ -7,7 +7,6 @@ import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { motion } from "framer-motion";
 import {
-  AlertCircle,
   AlertTriangle,
   CheckCircle2,
   Clock,
@@ -16,10 +15,8 @@ import {
   Shield,
   Sparkles,
   Target,
-  XCircle,
-  Zap,
+  XCircle
 } from "lucide-react";
-import { JSX, useState } from "react";
 
 export interface ReviewResult {
   complexity: string;
@@ -83,35 +80,7 @@ export function CodeReviewViewer({ review, metadata, isLoading, error }: CodeRev
     );
   }
 
-  if (isLoading) {
-    return (
-      <div className="flex h-full items-center justify-center p-8">
-        <motion.div
-          initial={{ opacity: 0, scale: 0.95 }}
-          animate={{ opacity: 1, scale: 1 }}
-          className="text-center"
-        >
-          <div className="relative mx-auto mb-6">
-            <div className="absolute inset-0 rounded-full bg-cyan-500/20 blur-xl animate-pulse" />
-            <div className="relative flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-cyan-500 to-blue-500 shadow-lg shadow-cyan-500/25">
-              <Sparkles className="h-8 w-8 text-white animate-pulse" />
-            </div>
-          </div>
-          <h3 className="text-lg font-semibold text-foreground mb-2">
-            Analyzing with Qwen 3-32B
-          </h3>
-          <p className="text-sm text-muted-foreground">
-            Deep code analysis in progress...
-          </p>
-          <div className="flex items-center justify-center gap-1 mt-3">
-            <div className="h-1.5 w-1.5 rounded-full bg-cyan-500 animate-bounce" style={{ animationDelay: '0ms' }} />
-            <div className="h-1.5 w-1.5 rounded-full bg-cyan-500 animate-bounce" style={{ animationDelay: '150ms' }} />
-            <div className="h-1.5 w-1.5 rounded-full bg-cyan-500 animate-bounce" style={{ animationDelay: '300ms' }} />
-          </div>
-        </motion.div>
-      </div>
-    );
-  }
+
 
   if (!review) {
     return (
@@ -138,7 +107,7 @@ export function CodeReviewViewer({ review, metadata, isLoading, error }: CodeRev
       id: 'complexity',
       title: 'Complexity Analysis',
       icon: Target,
-      gradient: 'from-blue-500 to-cyan-500',
+      gradient: 'from-blue-600 to-blue-400',
       bg: 'bg-blue-500/5',
       border: 'border-blue-500/20',
       iconColor: 'text-blue-500',
@@ -156,37 +125,37 @@ export function CodeReviewViewer({ review, metadata, isLoading, error }: CodeRev
       id: 'behavioral',
       title: 'Behavioral Correctness',
       icon: CheckCircle2,
-      gradient: 'from-emerald-500 to-green-500',
-      bg: 'bg-emerald-500/5',
-      border: 'border-emerald-500/20',
-      iconColor: 'text-emerald-500',
+      gradient: 'from-teal-500 to-emerald-600',
+      bg: 'bg-teal-500/5',
+      border: 'border-teal-500/20',
+      iconColor: 'text-teal-500',
     },
     {
       id: 'risks',
       title: 'Hidden Risks',
       icon: AlertTriangle,
-      gradient: 'from-orange-500 to-red-500',
-      bg: 'bg-orange-500/5',
-      border: 'border-orange-500/20',
-      iconColor: 'text-orange-500',
+      gradient: 'from-amber-500 to-orange-600',
+      bg: 'bg-amber-500/5',
+      border: 'border-amber-500/20',
+      iconColor: 'text-amber-500',
     },
     {
       id: 'edgeCases',
       title: 'Edge Cases & Boundaries',
       icon: FileWarning,
-      gradient: 'from-purple-500 to-violet-500',
-      bg: 'bg-purple-500/5',
-      border: 'border-purple-500/20',
-      iconColor: 'text-purple-500',
+      gradient: 'from-indigo-500 to-violet-600',
+      bg: 'bg-indigo-500/5',
+      border: 'border-indigo-500/20',
+      iconColor: 'text-indigo-500',
     },
     {
       id: 'summary',
       title: 'Summary',
       icon: Shield,
-      gradient: 'from-cyan-500 to-teal-500',
-      bg: 'bg-cyan-500/5',
-      border: 'border-cyan-500/20',
-      iconColor: 'text-cyan-500',
+      gradient: 'from-sky-500 to-blue-600',
+      bg: 'bg-sky-500/5',
+      border: 'border-sky-500/20',
+      iconColor: 'text-sky-500',
     },
   ];
 
@@ -220,7 +189,7 @@ export function CodeReviewViewer({ review, metadata, isLoading, error }: CodeRev
           className="flex items-center justify-between pb-4 border-b border-border/50"
         >
           <div className="flex items-center gap-3">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-cyan-500 to-blue-500 shadow-lg shadow-cyan-500/20">
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-linear-to-br from-blue-600 to-blue-400 shadow-lg shadow-blue-500/20">
               <Sparkles className="h-4 w-4 text-white" />
             </div>
             <div>
@@ -259,7 +228,7 @@ export function CodeReviewViewer({ review, metadata, isLoading, error }: CodeRev
                 >
                   {/* Section Header */}
                   <div className={`flex items-center gap-3 px-4 py-3 ${section.bg}`}>
-                    <div className={`flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-to-br ${section.gradient} shadow-sm`}>
+                    <div className={`flex h-7 w-7 items-center justify-center rounded-lg bg-linear-to-br ${section.gradient} shadow-sm`}>
                       <section.icon className="h-3.5 w-3.5 text-white" />
                     </div>
                     <h4 className="text-sm font-semibold text-foreground">{section.title}</h4>
@@ -284,37 +253,7 @@ export function CodeReviewViewer({ review, metadata, isLoading, error }: CodeRev
         )}
 
         {/* Token Usage */}
-        {metadata && (
-          <motion.div variants={itemVariants} className="pt-4 border-t border-border/50">
-            <div className="flex items-center gap-2 mb-4">
-              <Zap className="h-4 w-4 text-yellow-500" />
-              <span className="text-sm font-semibold text-foreground">Token Usage</span>
-            </div>
-            <div className="grid grid-cols-3 gap-3">
-              <div className="glass rounded-xl p-4 text-center">
-                <div className="text-2xl font-bold text-foreground">
-                  {metadata.promptTokens.toLocaleString()}
-                </div>
-                <span className="text-xs text-muted-foreground">Prompt</span>
-              </div>
-              <div className="glass rounded-xl p-4 text-center">
-                <div className="text-2xl font-bold text-foreground">
-                  {metadata.completionTokens.toLocaleString()}
-                </div>
-                <span className="text-xs text-muted-foreground">Completion</span>
-              </div>
-              <div className="glass rounded-xl p-4 text-center bg-gradient-to-br from-cyan-500/5 to-blue-500/5 border border-cyan-500/20">
-                <div className="text-2xl font-bold text-cyan-500">
-                  {metadata.tokensUsed.toLocaleString()}
-                </div>
-                <span className="text-xs text-muted-foreground">Total</span>
-              </div>
-            </div>
-            <p className="text-xs text-muted-foreground text-center mt-4">
-              Reviewed at {new Date(metadata.timestamp).toLocaleString()}
-            </p>
-          </motion.div>
-        )}
+
       </motion.div>
     </ScrollArea>
   );

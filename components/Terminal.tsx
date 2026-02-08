@@ -121,8 +121,8 @@ export function Terminal({ output, error, isRunning, onInput, sessionId }: Termi
         <span className="text-xs text-zinc-400">Terminal</span>
         <div className="flex items-center gap-2">
           {isRunning && (
-            <span className="flex items-center gap-2 text-xs text-green-400">
-              <span className="w-2 h-2 bg-green-400 rounded-full animate-pulse" />
+            <span className="flex items-center gap-2 text-xs text-blue-400">
+              <span className="w-2 h-2 bg-blue-400 rounded-full animate-pulse" />
               Running
             </span>
           )}
@@ -148,7 +148,7 @@ export function Terminal({ output, error, isRunning, onInput, sessionId }: Termi
               className={`${line.type === 'error'
                 ? 'text-red-400'
                 : line.type === 'input'
-                  ? 'text-blue-400'
+                  ? 'text-sky-400'
                   : 'text-zinc-300'
                 }`}
             >

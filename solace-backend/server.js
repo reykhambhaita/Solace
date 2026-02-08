@@ -1149,7 +1149,7 @@ function extractTranslationWarnings(sourceLanguage, targetLanguage) {
   return dynamicWarnings;
 }
 
-app.listen(PORT, '0.0.0.0', () => {
+const server = app.listen(PORT, '0.0.0.0', () => {
   console.log('=================================');
   console.log('Solace Backend Server Started');
   console.log(`Port: ${PORT}`);
@@ -1165,4 +1165,19 @@ app.listen(PORT, '0.0.0.0', () => {
   if (!GROQ_API_KEY) {
     console.warn('⚠️  Warning: Set GROQ_API_KEY environment variable to enable AI features');
   }
+});
+
+server.on('error', (error) => {
+  console.error('SERVER ERROR:', error);
+  if (error.code === 'EADDRINUSE') {
+    console.error(`Port ${PORT} is already in use. Please stop the other process or use a different port.`);
+  }
+});
+
+process.on('uncaughtException', (err) => {
+  console.error('UNCAUGHT EXCEPTION:', err);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('UNHANDLED REJECTION:', reason);
 });

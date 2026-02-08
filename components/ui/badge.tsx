@@ -1,6 +1,6 @@
-import * as React from "react"
 import { Slot } from "@radix-ui/react-slot"
 import { cva, type VariantProps } from "class-variance-authority"
+import * as React from "react"
 
 import { cn } from "@/lib/utils"
 
@@ -18,17 +18,17 @@ const badgeVariants = cva(
         outline:
           "text-foreground bg-background/50 backdrop-blur-sm [a&]:hover:bg-accent [a&]:hover:text-accent-foreground",
         success:
-          "border-transparent bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/20",
+          "border-transparent bg-teal-500/15 text-teal-600 dark:text-teal-400 border-teal-500/20",
         warning:
-          "border-transparent bg-yellow-500/15 text-yellow-600 dark:text-yellow-400 border-yellow-500/20",
+          "border-transparent bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/20",
         info:
           "border-transparent bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/20",
         purple:
-          "border-transparent bg-purple-500/15 text-purple-600 dark:text-purple-400 border-purple-500/20",
+          "border-transparent bg-indigo-500/15 text-indigo-600 dark:text-indigo-400 border-indigo-500/20",
         cyan:
-          "border-transparent bg-cyan-500/15 text-cyan-600 dark:text-cyan-400 border-cyan-500/20",
+          "border-transparent bg-sky-500/15 text-sky-600 dark:text-sky-400 border-sky-500/20",
         glow:
-          "border-violet-500/30 bg-violet-500/10 text-violet-600 dark:text-violet-400 shadow-sm shadow-violet-500/10",
+          "border-blue-500/30 bg-blue-500/10 text-blue-600 dark:text-blue-400 shadow-sm shadow-blue-500/10",
       },
     },
     defaultVariants: {
